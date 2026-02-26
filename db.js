@@ -1,65 +1,54 @@
-import Database from "better-sqlite3";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs";
+import pg from "pg";
 import { randomBytes, pbkdf2Sync, timingSafeEqual } from "crypto";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { Pool } = pg;
 
-const dataDir = path.join(__dirname, "data");
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-const dbPath = path.join(dataDir, "stock.sqlite");
-export const db = new Database(dbPath);
-
-// Simple migration helper: add column if missing
-function ensureColumn(table, column, ddl) {
-  const cols = db
-    .prepare(`PRAGMA table_info(${table})`)
-    .all()
-    .map((r) => r.name);
-  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL mancante. Configura Heroku Postgres e imposta DATABASE_URL.",
+  );
 }
 
-export function initDb() {
-  db.pragma("journal_mode = WAL");
+const isProduction = process.env.NODE_ENV === "production";
+export const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: isProduction ? { rejectUnauthorized: false } : undefined,
+});
 
-  db.exec(`
+export async function initDb() {
+  await db.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       pin_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'operator',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       sku TEXT NOT NULL,
       description TEXT NOT NULL,
       lot TEXT NOT NULL,
-      entry_date TEXT,
+      entry_date DATE,
       uom TEXT NOT NULL DEFAULT 'PC',
-      initial_qty REAL NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      initial_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(sku, lot)
     );
 
     CREATE TABLE IF NOT EXISTS movements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      item_id INTEGER NOT NULL,
+      id BIGSERIAL PRIMARY KEY,
+      item_id BIGINT NOT NULL REFERENCES items(id),
       type TEXT NOT NULL CHECK(type IN ('IN','OUT')),
-      qty REAL NOT NULL CHECK(qty > 0),
+      qty DOUBLE PRECISION NOT NULL CHECK(qty > 0),
       warehouse TEXT NOT NULL DEFAULT 'MAIN',
       location TEXT NOT NULL DEFAULT 'DEFAULT',
       bin TEXT NOT NULL DEFAULT 'DEFAULT',
-      operator_user_id INTEGER,
-      ts TEXT NOT NULL DEFAULT (datetime('now')),
-      note TEXT,
-      FOREIGN KEY(item_id) REFERENCES items(id),
-      FOREIGN KEY(operator_user_id) REFERENCES users(id)
+      operator_user_id BIGINT REFERENCES users(id),
+      ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      note TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_movements_item ON movements(item_id);
@@ -67,35 +56,12 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_movements_wh ON movements(warehouse, location, bin);
   `);
 
-  // Backward compatible migrations (if DB from older version)
-  ensureColumn("movements", "note", "note TEXT");
-  ensureColumn(
-    "users",
-    "created_at",
-    "created_at TEXT NOT NULL DEFAULT (datetime('now'))",
-  );
-  ensureColumn(
-    "items",
-    "created_at",
-    "created_at TEXT NOT NULL DEFAULT (datetime('now'))",
-  );
-  ensureColumn(
-    "items",
-    "updated_at",
-    "updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
-  );
-  ensureColumn("items", "uom", "uom TEXT NOT NULL DEFAULT 'PC'");
-  ensureColumn("items", "initial_qty", "initial_qty REAL NOT NULL DEFAULT 0");
-
-  // Seed admin if none exists
-  const n = db.prepare(`SELECT COUNT(*) AS n FROM users`).get().n;
-  if (n === 0) {
-    const defaultPin = "1234";
-    const hash = hashPin(defaultPin);
-    db.prepare(`INSERT INTO users (name, pin_hash, role) VALUES (?,?,?)`).run(
-      "Admin",
-      hash,
-      "admin",
+  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
+  if (rows[0].n === 0) {
+    const hash = hashPin("1234");
+    await db.query(
+      `INSERT INTO users (name, pin_hash, role) VALUES ($1, $2, $3)`,
+      ["Admin", hash, "admin"],
     );
     console.log(
       "Seeded default admin PIN = 1234 (change it in Admin → Users).",
@@ -129,41 +95,49 @@ export function verifyPin(pin, stored) {
   }
 }
 
-// ---- Users ----
-export function listUsers() {
-  return db
-    .prepare(`SELECT id, name, role, created_at FROM users ORDER BY id`)
-    .all();
+export async function listUsers() {
+  const { rows } = await db.query(
+    `SELECT id, name, role, created_at FROM users ORDER BY id`,
+  );
+  return rows;
 }
-export function getUserById(id) {
-  return db.prepare(`SELECT id, name, role FROM users WHERE id=?`).get(id);
+
+export async function getUserById(id) {
+  const { rows } = await db.query(
+    `SELECT id, name, role FROM users WHERE id=$1`,
+    [id],
+  );
+  return rows[0] || null;
 }
-export function getUserByPin(pin) {
-  const rows = db.prepare(`SELECT id, name, role, pin_hash FROM users`).all();
+
+export async function getUserByPin(pin) {
+  const { rows } = await db.query(`SELECT id, name, role, pin_hash FROM users`);
   for (const r of rows) {
     if (verifyPin(pin, r.pin_hash))
       return { id: r.id, name: r.name, role: r.role };
   }
   return null;
 }
-export function createUser({ name, pin, role }) {
+
+export async function createUser({ name, pin, role }) {
   const hash = hashPin(pin);
-  db.prepare(`INSERT INTO users (name, pin_hash, role) VALUES (?,?,?)`).run(
+  await db.query(`INSERT INTO users (name, pin_hash, role) VALUES ($1,$2,$3)`, [
     name,
     hash,
     role || "operator",
-  );
-}
-export function resetUserPin({ user_id, pin }) {
-  const hash = hashPin(pin);
-  db.prepare(`UPDATE users SET pin_hash=? WHERE id=?`).run(hash, user_id);
-}
-export function deleteUser({ user_id }) {
-  db.prepare(`DELETE FROM users WHERE id=?`).run(user_id);
+  ]);
 }
 
-// ---- Items ----
-export function upsertItem({
+export async function resetUserPin({ user_id, pin }) {
+  const hash = hashPin(pin);
+  await db.query(`UPDATE users SET pin_hash=$1 WHERE id=$2`, [hash, user_id]);
+}
+
+export async function deleteUser({ user_id }) {
+  await db.query(`DELETE FROM users WHERE id=$1`, [user_id]);
+}
+
+export async function upsertItem({
   sku,
   description,
   lot,
@@ -171,50 +145,56 @@ export function upsertItem({
   uom = "PC",
   initial_qty = 0,
 }) {
-  db.prepare(
+  await db.query(
     `
     INSERT INTO items (sku, description, lot, entry_date, uom, initial_qty)
-    VALUES (@sku, @description, @lot, @entry_date, @uom, @initial_qty)
+    VALUES ($1,$2,$3,$4,$5,$6)
     ON CONFLICT(sku, lot) DO UPDATE SET
-      description=excluded.description,
-      entry_date=excluded.entry_date,
-      uom=excluded.uom,
-      initial_qty=excluded.initial_qty,
-      updated_at=datetime('now')
-  `,
-  ).run({ sku, description, lot, entry_date, uom, initial_qty });
+      description=EXCLUDED.description,
+      entry_date=EXCLUDED.entry_date,
+      uom=EXCLUDED.uom,
+      initial_qty=EXCLUDED.initial_qty,
+      updated_at=NOW()
+    `,
+    [sku, description, lot, entry_date || null, uom, initial_qty],
+  );
 }
-export function listItems() {
-  return db
-    .prepare(
-      `
+
+export async function listItems() {
+  const { rows } = await db.query(`
     SELECT sku, description, lot, entry_date, uom, initial_qty, created_at
     FROM items
     ORDER BY created_at DESC
-  `,
-    )
-    .all();
-}
-export function getItemBySkuLot(sku, lot) {
-  return db.prepare(`SELECT * FROM items WHERE sku=? AND lot=?`).get(sku, lot);
+  `);
+  return rows;
 }
 
-// ---- Movements & Stock ----
-export function getOnhandForItemAt({ item_id, warehouse, location, bin }) {
-  return db
-    .prepare(
-      `
+export async function getItemBySkuLot(sku, lot) {
+  const { rows } = await db.query(
+    `SELECT * FROM items WHERE sku=$1 AND lot=$2`,
+    [sku, lot],
+  );
+  return rows[0] || null;
+}
+
+export async function getOnhandForItemAt(
+  { item_id, warehouse, location, bin },
+  client = db,
+) {
+  const { rows } = await client.query(
+    `
     SELECT
       COALESCE(SUM(CASE WHEN type='IN' THEN qty END),0) -
       COALESCE(SUM(CASE WHEN type='OUT' THEN qty END),0) AS onhand
     FROM movements
-    WHERE item_id=? AND warehouse=? AND location=? AND bin=?
+    WHERE item_id=$1 AND warehouse=$2 AND location=$3 AND bin=$4
   `,
-    )
-    .get(item_id, warehouse, location, bin).onhand;
+    [item_id, warehouse, location, bin],
+  );
+  return Number(rows[0]?.onhand || 0);
 }
 
-export function addMovementChecked({
+export async function addMovementChecked({
   item_id,
   type,
   qty,
@@ -224,9 +204,14 @@ export function addMovementChecked({
   operator_user_id,
   note,
 }) {
-  const tx = db.transaction(() => {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
     if (type === "OUT") {
-      const onhand = getOnhandForItemAt({ item_id, warehouse, location, bin });
+      const onhand = await getOnhandForItemAt(
+        { item_id, warehouse, location, bin },
+        client,
+      );
       if (onhand < qty) {
         const err = new Error(
           `Stock insufficiente: on-hand=${onhand}, richiesto OUT=${qty}`,
@@ -235,29 +220,35 @@ export function addMovementChecked({
         throw err;
       }
     }
-    db.prepare(
+
+    await client.query(
       `
       INSERT INTO movements (item_id, type, qty, warehouse, location, bin, operator_user_id, note)
-      VALUES (?,?,?,?,?,?,?,?)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
     `,
-    ).run(
-      item_id,
-      type,
-      qty,
-      warehouse,
-      location,
-      bin,
-      operator_user_id || null,
-      note || null,
+      [
+        item_id,
+        type,
+        qty,
+        warehouse,
+        location,
+        bin,
+        operator_user_id || null,
+        note || null,
+      ],
     );
-  });
-  tx();
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-export function listMovements(limit = 200) {
-  return db
-    .prepare(
-      `
+export async function listMovements(limit = 200) {
+  const { rows } = await db.query(
+    `
     SELECT m.ts, m.type, m.qty, m.warehouse, m.location, m.bin, m.note,
            i.sku, i.lot, i.description,
            u.name AS operator
@@ -265,18 +256,23 @@ export function listMovements(limit = 200) {
     JOIN items i ON i.id = m.item_id
     LEFT JOIN users u ON u.id = m.operator_user_id
     ORDER BY m.ts DESC, m.id DESC
-    LIMIT ?
+    LIMIT $1
   `,
-    )
-    .all(limit);
+    [limit],
+  );
+  return rows;
 }
 
-export function getStockRows({ warehouse = null } = {}) {
-  const where = warehouse ? `WHERE m.warehouse = @warehouse` : ``;
+export async function getStockRows({ warehouse = null } = {}) {
+  const params = [];
+  let where = "";
+  if (warehouse) {
+    params.push(warehouse);
+    where = `WHERE m.warehouse = $${params.length}`;
+  }
 
-  return db
-    .prepare(
-      `
+  const { rows } = await db.query(
+    `
     WITH agg AS (
       SELECT
         i.sku, i.description, i.lot, i.entry_date, i.uom, i.initial_qty,
@@ -286,7 +282,7 @@ export function getStockRows({ warehouse = null } = {}) {
       FROM items i
       LEFT JOIN movements m ON m.item_id = i.id
       ${where}
-      GROUP BY i.sku, i.lot, i.uom, i.initial_qty, m.warehouse, m.location, m.bin
+      GROUP BY i.sku, i.description, i.lot, i.entry_date, i.uom, i.initial_qty, m.warehouse, m.location, m.bin
     )
     SELECT
       sku, description, lot, entry_date, uom, initial_qty,
@@ -298,46 +294,41 @@ export function getStockRows({ warehouse = null } = {}) {
     FROM agg
     ORDER BY sku, lot, warehouse, location, bin
   `,
-    )
-    .all({ warehouse });
+    params,
+  );
+  return rows;
 }
 
-export function listWarehouses() {
-  return db
-    .prepare(
-      `
+export async function listWarehouses() {
+  const { rows } = await db.query(`
     SELECT DISTINCT warehouse FROM movements
     UNION
     SELECT 'MAIN' AS warehouse
     ORDER BY warehouse
-  `,
-    )
-    .all()
-    .map((r) => r.warehouse);
+  `);
+  return rows.map((r) => r.warehouse);
 }
 
-export function listLocations(warehouse) {
-  return db
-    .prepare(
-      `
-    SELECT DISTINCT location FROM movements WHERE warehouse=?
+export async function listLocations(warehouse) {
+  const { rows } = await db.query(
+    `
+    SELECT DISTINCT location FROM movements WHERE warehouse=$1
     UNION SELECT 'DEFAULT'
     ORDER BY location
   `,
-    )
-    .all(warehouse)
-    .map((r) => r.location);
+    [warehouse],
+  );
+  return rows.map((r) => r.location);
 }
 
-export function listBins(warehouse, location) {
-  return db
-    .prepare(
-      `
-    SELECT DISTINCT bin FROM movements WHERE warehouse=? AND location=?
+export async function listBins(warehouse, location) {
+  const { rows } = await db.query(
+    `
+    SELECT DISTINCT bin FROM movements WHERE warehouse=$1 AND location=$2
     UNION SELECT 'DEFAULT'
     ORDER BY bin
   `,
-    )
-    .all(warehouse, location)
-    .map((r) => r.bin);
+    [warehouse, location],
+  );
+  return rows.map((r) => r.bin);
 }

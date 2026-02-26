@@ -1,3 +1,4 @@
+cat > server.js << "EOF";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -23,25 +24,28 @@ import {
   listWarehouses,
   listLocations,
   listBins,
-  getOnhandForItemAt
+  getOnhandForItemAt,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-initDb();
-
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use(cookieSession({
-  name: "qrstock_session",
-  keys: [process.env.SESSION_KEY || "dev-session-key-change-me"],
-  maxAge: 7 * 24 * 60 * 60 * 1000
-}));
+app.use(
+  cookieSession({
+    name: "qrstock_session",
+    keys: [process.env.SESSION_KEY || "dev-session-key-change-me"],
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  }),
+);
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 app.use("/static", express.static(path.join(__dirname, "public")));
 
@@ -54,7 +58,7 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function escapeHtml(s="") {
+function escapeHtml(s = "") {
   return String(s)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -63,16 +67,19 @@ function escapeHtml(s="") {
     .replaceAll("'", "&#039;");
 }
 
-function requireAuth(req, res, next) {
-  if (!req.session?.user_id) return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-  req.user = getUserById(req.session.user_id);
+async function requireAuth(req, res, next) {
+  if (!req.session?.user_id)
+    return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  req.user = await getUserById(req.session.user_id);
   return next();
 }
 
-function requireAdmin(req, res, next) {
-  if (!req.session?.user_id) return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-  const u = getUserById(req.session.user_id);
-  if (!u || u.role !== "admin") return res.status(403).send("Forbidden (admin only)");
+async function requireAdmin(req, res, next) {
+  if (!req.session?.user_id)
+    return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  const u = await getUserById(req.session.user_id);
+  if (!u || u.role !== "admin")
+    return res.status(403).send("Forbidden (admin only)");
   req.user = u;
   return next();
 }
@@ -87,11 +94,11 @@ function nav(req, active) {
 <header class="topbar">
   <div class="brand">QR Stock</div>
   <nav class="nav">
-    <a href="/" class="${active==='stock'?'active':''}">Stock</a>
-    <a href="/items" class="${active==='items'?'active':''}">Items</a>
-    <a href="/labels" class="${active==='labels'?'active':''}">Stampa QR</a>
-    <a href="/movements" class="${active==='movements'?'active':''}">Movimenti</a>
-    <a href="/admin" class="${active==='admin'?'active':''}">Admin</a>
+    <a href="/" class="${active === "stock" ? "active" : ""}">Stock</a>
+    <a href="/items" class="${active === "items" ? "active" : ""}">Items</a>
+    <a href="/labels" class="${active === "labels" ? "active" : ""}">Stampa QR</a>
+    <a href="/movements" class="${active === "movements" ? "active" : ""}">Movimenti</a>
+    <a href="/admin" class="${active === "admin" ? "active" : ""}">Admin</a>
     ${who}
   </nav>
 </header>`;
@@ -126,10 +133,11 @@ app.get("/login", (req, res) => {
 </body></html>`);
 });
 
-app.post("/login", (req, res) => {
+app.post("/login", async (req, res) => {
   const { pin, next } = req.body || {};
-  const u = getUserByPin(String(pin || ""));
-  if (!u) return res.status(401).send("PIN non valido. <a href='/login'>Riprova</a>");
+  const u = await getUserByPin(String(pin || ""));
+  if (!u)
+    return res.status(401).send("PIN non valido. <a href='/login'>Riprova</a>");
   req.session.user_id = u.id;
   res.redirect(next || "/");
 });
@@ -140,14 +148,21 @@ app.get("/logout", (req, res) => {
 });
 
 // ---- Pages ----
-app.get("/", requireAuth, (req, res) => {
+app.get("/", requireAuth, async (req, res) => {
   const wh = req.query.warehouse ? String(req.query.warehouse) : "";
-  const stock = getStockRows({ warehouse: wh || null });
-  const whList = listWarehouses();
+  const stock = await getStockRows({ warehouse: wh || null });
+  const whList = await listWarehouses();
 
-  const whOptions = whList.map(x => `<option value="${escapeHtml(x)}" ${x===wh?'selected':''}>${escapeHtml(x)}</option>`).join("");
+  const whOptions = whList
+    .map(
+      (x) =>
+        `<option value="${escapeHtml(x)}" ${x === wh ? "selected" : ""}>${escapeHtml(x)}</option>`,
+    )
+    .join("");
 
-  const rows = stock.map(r => `
+  const rows = stock
+    .map(
+      (r) => `
     <tr>
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
@@ -162,7 +177,9 @@ app.get("/", requireAuth, (req, res) => {
       <td style="text-align:right">${r.qty_out}</td>
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
     </tr>
-  `).join("");
+  `,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -217,9 +234,11 @@ ${nav(req, "stock")}
 </html>`);
 });
 
-app.get("/items", requireAuth, (req, res) => {
-  const items = listItems();
-  const rows = items.map(it => `
+app.get("/items", requireAuth, async (req, res) => {
+  const items = await listItems();
+  const rows = items
+    .map(
+      (it) => `
     <tr>
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
@@ -229,7 +248,9 @@ app.get("/items", requireAuth, (req, res) => {
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(it.created_at)}</td>
     </tr>
-  `).join("");
+  `,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -290,144 +311,197 @@ ${nav(req, "items")}
 </html>`);
 });
 
-app.post("/items", requireAuth, (req, res) => {
-  const { sku, description, lot, entry_date, uom, initial_qty } = req.body || {};
-  if (!sku || !description || !lot) return res.status(400).send("Missing fields");
-  upsertItem({
+app.post("/items", requireAuth, async (req, res) => {
+  const { sku, description, lot, entry_date, uom, initial_qty } =
+    req.body || {};
+  if (!sku || !description || !lot)
+    return res.status(400).send("Missing fields");
+  await upsertItem({
     sku: String(sku).trim(),
     description: String(description).trim(),
     lot: String(lot).trim(),
     entry_date: entry_date ? String(entry_date).trim() : null,
-    uom: (uom ? String(uom).trim() : 'PC') || 'PC',
-    initial_qty: Number(initial_qty || 0)
+    uom: (uom ? String(uom).trim() : "PC") || "PC",
+    initial_qty: Number(initial_qty || 0),
   });
   res.redirect("/items");
 });
 
+app.post(
+  "/items/import",
+  requireAuth,
+  upload.single("file"),
+  async (req, res) => {
+    if (!req.file) return res.status(400).send("No file uploaded");
 
-app.post("/items/import", requireAuth, upload.single("file"), (req, res) => {
-  if (!req.file) return res.status(400).send("No file uploaded");
+    // cellDates:true -> if the sheet stores dates as dates, xlsx will expose them as Date objects
+    const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
+    const sheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
 
-  // cellDates:true -> if the sheet stores dates as dates, xlsx will expose them as Date objects
-  const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
-  const sheetName = wb.SheetNames[0];
-  const ws = wb.Sheets[sheetName];
+    // raw:true keeps numbers/dates as-is (e.g., Excel serial numbers, Date objects)
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
 
-  // raw:true keeps numbers/dates as-is (e.g., Excel serial numbers, Date objects)
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+    const norm = (s) =>
+      String(s || "")
+        .trim()
+        .toLowerCase();
 
-  const norm = (s) => String(s || "").trim().toLowerCase();
+    // Determine 1904 date system if present
+    const date1904 = !!(
+      wb.Workbook &&
+      wb.Workbook.WBProps &&
+      wb.Workbook.WBProps.date1904
+    );
 
-  // Determine 1904 date system if present
-  const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
-
-  function toIsoDate(d) {
-    // YYYY-MM-DD in local time (stable for inventory purposes)
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  }
-
-  function parseEntryDate(value) {
-    if (value === null || value === undefined) return null;
-
-    // 1) Date object
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-      return toIsoDate(value);
+    function toIsoDate(d) {
+      // YYYY-MM-DD in local time (stable for inventory purposes)
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
     }
 
-    // 2) Excel serial number (e.g., 45234)
-    if (typeof value === "number" && Number.isFinite(value)) {
-      // Use xlsx SSF helper
-      const dc = XLSX.SSF.parse_date_code(value, { date1904 });
-      if (dc && dc.y && dc.m && dc.d) {
-        const d = new Date(dc.y, dc.m - 1, dc.d);
-        return toIsoDate(d);
+    function parseEntryDate(value) {
+      if (value === null || value === undefined) return null;
+
+      // 1) Date object
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return toIsoDate(value);
       }
+
+      // 2) Excel serial number (e.g., 45234)
+      if (typeof value === "number" && Number.isFinite(value)) {
+        // Use xlsx SSF helper
+        const dc = XLSX.SSF.parse_date_code(value, { date1904 });
+        if (dc && dc.y && dc.m && dc.d) {
+          const d = new Date(dc.y, dc.m - 1, dc.d);
+          return toIsoDate(d);
+        }
+        return null;
+      }
+
+      // 3) String: accept ISO (YYYY-MM-DD) or Italian (DD/MM/YYYY)
+      const s = String(value).trim();
+      if (!s) return null;
+
+      // Formula like =TODAY() / =NOW() -> use today's date
+      if (s.startsWith("=")) {
+        const today = new Date();
+        return toIsoDate(today);
+      }
+
+      // ISO
+      const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (iso) return s;
+
+      // Italian dd/mm/yyyy or dd-mm-yyyy
+      const it = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if (it) {
+        const dd = Number(it[1]);
+        const mm = Number(it[2]);
+        const yyyy = Number(it[3]);
+        const d = new Date(yyyy, mm - 1, dd);
+        if (!Number.isNaN(d.getTime())) return toIsoDate(d);
+      }
+
+      // Fallback: try Date.parse (e.g., "2026/02/24")
+      const t = Date.parse(s);
+      if (!Number.isNaN(t)) return toIsoDate(new Date(t));
+
       return null;
     }
 
-    // 3) String: accept ISO (YYYY-MM-DD) or Italian (DD/MM/YYYY)
-    const s = String(value).trim();
-    if (!s) return null;
+    let ok = 0,
+      skipped = 0;
 
-    // Formula like =TODAY() / =NOW() -> use today's date
-    if (s.startsWith("=")) {
-      const today = new Date();
-      return toIsoDate(today);
+    for (const r of rows) {
+      const keys = Object.keys(r);
+
+      const get = (...names) => {
+        const wanted = names.map((n) => norm(n));
+        // exact match
+        for (const n of wanted) {
+          const k = keys.find((k) => norm(k) === n);
+          if (k) return r[k];
+        }
+        // contains match (handles headers like "Description/Descrizione")
+        for (const n of wanted) {
+          const k = keys.find((k) => norm(k).includes(n));
+          if (k) return r[k];
+        }
+        return "";
+      };
+
+      const sku = String(get("SKU", "Sku")).trim();
+      const description = String(get("Description", "Descrizione")).trim();
+      const lot = String(get("Lot", "LOT")).trim();
+
+      const entryRaw = get(
+        "EntryDate",
+        "DataIngresso",
+        "Data ingresso",
+        "Entry Date",
+        "Data Ingresso",
+      );
+      const entry_date = parseEntryDate(entryRaw);
+
+      const uomRaw = get(
+        "UoM",
+        "UOM",
+        "UM",
+        "U.M.",
+        "Unit",
+        "Unita",
+        "Unità",
+        "U.M",
+      );
+      const uom = String(uomRaw || "").trim() || "PC";
+
+      const qtyRaw = get(
+        "InitialQty",
+        "Qty",
+        "Quantita",
+        "Quantità",
+        "Qta",
+        "Q.tà",
+        "QTY",
+      );
+      const initial_qty =
+        typeof qtyRaw === "number"
+          ? qtyRaw
+          : Number(String(qtyRaw || "").replace(",", "."));
+
+      if (!sku || !description || !lot) {
+        skipped++;
+        continue;
+      }
+      await upsertItem({
+        sku,
+        description,
+        lot,
+        entry_date,
+        uom,
+        initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
+      });
+      ok++;
     }
 
-    // ISO
-    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (iso) return s;
-
-    // Italian dd/mm/yyyy or dd-mm-yyyy
-    const it = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-    if (it) {
-      const dd = Number(it[1]);
-      const mm = Number(it[2]);
-      const yyyy = Number(it[3]);
-      const d = new Date(yyyy, mm - 1, dd);
-      if (!Number.isNaN(d.getTime())) return toIsoDate(d);
-    }
-
-    // Fallback: try Date.parse (e.g., "2026/02/24")
-    const t = Date.parse(s);
-    if (!Number.isNaN(t)) return toIsoDate(new Date(t));
-
-    return null;
-  }
-
-  let ok = 0, skipped = 0;
-
-  for (const r of rows) {
-    const keys = Object.keys(r);
-
-    const get = (...names) => {
-      const wanted = names.map(n => norm(n));
-      // exact match
-      for (const n of wanted) {
-        const k = keys.find(k => norm(k) === n);
-        if (k) return r[k];
-      }
-      // contains match (handles headers like "Description/Descrizione")
-      for (const n of wanted) {
-        const k = keys.find(k => norm(k).includes(n));
-        if (k) return r[k];
-      }
-      return "";
-    };
-
-    const sku = String(get("SKU", "Sku")).trim();
-    const description = String(get("Description", "Descrizione")).trim();
-    const lot = String(get("Lot", "LOT")).trim();
-
-    const entryRaw = get("EntryDate", "DataIngresso", "Data ingresso", "Entry Date", "Data Ingresso");
-    const entry_date = parseEntryDate(entryRaw);
-
-    const uomRaw = get("UoM", "UOM", "UM", "U.M.", "Unit", "Unita", "Unità", "U.M");
-    const uom = String(uomRaw || "").trim() || "PC";
-
-    const qtyRaw = get("InitialQty", "Qty", "Quantita", "Quantità", "Qta", "Q.tà", "QTY");
-    const initial_qty = (typeof qtyRaw === 'number') ? qtyRaw : Number(String(qtyRaw || "").replace(',', '.'));
-
-    if (!sku || !description || !lot) { skipped++; continue; }
-    upsertItem({ sku, description, lot, entry_date, uom, initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0 });
-    ok++;
-  }
-
-  res.send(`Import completato. OK=${ok}, Skipped=${skipped}. <a href="/items">Torna a Items</a>`);
-});
+    res.send(
+      `Import completato. OK=${ok}, Skipped=${skipped}. <a href="/items">Torna a Items</a>`,
+    );
+  },
+);
 app.get("/labels", requireAuth, async (req, res) => {
-  const items = listItems();
+  const items = await listItems();
   const baseUrl = getBaseUrl(req);
 
   // QR payload requirement: SKU + Lot + Description (embedded in URL so iPhone camera can open)
-  const cards = await Promise.all(items.map(async it => {
-    const url = `${baseUrl}/scanlink?sku=${encodeURIComponent(it.sku)}&lot=${encodeURIComponent(it.lot)}&d=${encodeURIComponent(it.description)}`;
-    const dataUrl = await QRCode.toDataURL(url, { margin: 1, scale: 6 });
-    return `
+  const cards = await Promise.all(
+    items.map(async (it) => {
+      const url = `${baseUrl}/scanlink?sku=${encodeURIComponent(it.sku)}&lot=${encodeURIComponent(it.lot)}&d=${encodeURIComponent(it.description)}`;
+      const dataUrl = await QRCode.toDataURL(url, { margin: 1, scale: 6 });
+      return `
       <div class="label">
         <img class="qr" src="${dataUrl}" alt="QR" />
         <div class="label-text">
@@ -439,7 +513,8 @@ app.get("/labels", requireAuth, async (req, res) => {
         </div>
       </div>
     `;
-  }));
+    }),
+  );
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -477,11 +552,12 @@ ${nav(req, "labels")}
 </html>`);
 });
 
-app.get("/scanlink", requireAuth, (req, res) => {
+app.get("/scanlink", requireAuth, async (req, res) => {
   const { sku, lot } = req.query;
   if (!sku || !lot) return res.status(400).send("Missing sku/lot");
-  const item = getItemBySkuLot(String(sku), String(lot));
-  if (!item) return res.status(404).send("Item not found. Create it in /items first.");
+  const item = await getItemBySkuLot(String(sku), String(lot));
+  if (!item)
+    return res.status(404).send("Item not found. Create it in /items first.");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -639,9 +715,11 @@ html5QrcodeScanner.render(handleDecodedText);
 </html>`);
 });
 
-app.get("/movements", requireAuth, (req, res) => {
-  const moves = listMovements(500);
-  const rows = moves.map(m => `
+app.get("/movements", requireAuth, async (req, res) => {
+  const moves = await listMovements(500);
+  const rows = moves
+    .map(
+      (m) => `
     <tr>
       <td>${escapeHtml(m.ts)}</td>
       <td>${escapeHtml(m.type)}</td>
@@ -655,7 +733,9 @@ app.get("/movements", requireAuth, (req, res) => {
       <td>${escapeHtml(m.operator || "")}</td>
       <td>${escapeHtml(m.note || "")}</td>
     </tr>
-  `).join("");
+  `,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -695,9 +775,11 @@ ${nav(req, "movements")}
 });
 
 // ---- Admin ----
-app.get("/admin", requireAdmin, (req, res) => {
-  const users = listUsers();
-  const rows = users.map(u => `
+app.get("/admin", requireAdmin, async (req, res) => {
+  const users = await listUsers();
+  const rows = users
+    .map(
+      (u) => `
     <tr>
       <td>${u.id}</td>
       <td>${escapeHtml(u.name)}</td>
@@ -711,15 +793,21 @@ app.get("/admin", requireAdmin, (req, res) => {
         </form>
       </td>
       <td>
-        ${u.role === "admin" ? `<span class="muted">-</span>` : `
+        ${
+          u.role === "admin"
+            ? `<span class="muted">-</span>`
+            : `
           <form method="post" action="/admin/users/delete" onsubmit="return confirm('Eliminare utente?')" style="margin:0">
             <input type="hidden" name="user_id" value="${u.id}"/>
             <button class="btn danger" type="submit">Delete</button>
           </form>
-        `}
+        `
+        }
       </td>
     </tr>
-  `).join("");
+  `,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -765,62 +853,71 @@ ${nav(req, "admin")}
 </body></html>`);
 });
 
-app.post("/admin/users/create", requireAdmin, (req, res) => {
+app.post("/admin/users/create", requireAdmin, async (req, res) => {
   const { name, pin, role } = req.body || {};
   if (!name || !pin) return res.status(400).send("Missing fields");
-  createUser({ name: String(name).trim(), pin: String(pin).trim(), role: role === "admin" ? "admin" : "operator" });
+  await createUser({
+    name: String(name).trim(),
+    pin: String(pin).trim(),
+    role: role === "admin" ? "admin" : "operator",
+  });
   res.redirect("/admin");
 });
 
-app.post("/admin/users/reset", requireAdmin, (req, res) => {
+app.post("/admin/users/reset", requireAdmin, async (req, res) => {
   const { user_id, pin } = req.body || {};
   if (!user_id || !pin) return res.status(400).send("Missing fields");
-  resetUserPin({ user_id: Number(user_id), pin: String(pin).trim() });
+  await resetUserPin({ user_id: Number(user_id), pin: String(pin).trim() });
   res.redirect("/admin");
 });
 
-app.post("/admin/users/delete", requireAdmin, (req, res) => {
+app.post("/admin/users/delete", requireAdmin, async (req, res) => {
   const { user_id } = req.body || {};
   if (!user_id) return res.status(400).send("Missing user_id");
-  deleteUser({ user_id: Number(user_id) });
+  await deleteUser({ user_id: Number(user_id) });
   res.redirect("/admin");
 });
 
 // ---- API ----
-app.get("/api/stock", requireAuth, (req, res) => {
+app.get("/api/stock", requireAuth, async (req, res) => {
   const warehouse = req.query.warehouse ? String(req.query.warehouse) : null;
-  res.json({ rows: getStockRows({ warehouse }) });
+  res.json({ rows: await getStockRows({ warehouse }) });
 });
 
-app.get("/api/warehouses", requireAuth, (req, res) => {
-  res.json({ warehouses: listWarehouses() });
+app.get("/api/warehouses", requireAuth, async (req, res) => {
+  res.json({ warehouses: await listWarehouses() });
 });
-app.get("/api/locations", requireAuth, (req, res) => {
+app.get("/api/locations", requireAuth, async (req, res) => {
   const warehouse = String(req.query.warehouse || "MAIN");
-  res.json({ locations: listLocations(warehouse) });
+  res.json({ locations: await listLocations(warehouse) });
 });
-app.get("/api/bins", requireAuth, (req, res) => {
+app.get("/api/bins", requireAuth, async (req, res) => {
   const warehouse = String(req.query.warehouse || "MAIN");
   const location = String(req.query.location || "DEFAULT");
-  res.json({ bins: listBins(warehouse, location) });
+  res.json({ bins: await listBins(warehouse, location) });
 });
 
-app.post("/api/move", requireAuth, (req, res) => {
-  const { sku, lot, type, qty, warehouse, location, bin, note } = req.body || {};
-  if (!sku || !lot || !type) return res.status(400).json({ error: "Missing sku/lot/type" });
+app.post("/api/move", requireAuth, async (req, res) => {
+  const { sku, lot, type, qty, warehouse, location, bin, note } =
+    req.body || {};
+  if (!sku || !lot || !type)
+    return res.status(400).json({ error: "Missing sku/lot/type" });
   const q = Number(qty || 1);
-  if (!Number.isFinite(q) || q <= 0) return res.status(400).json({ error: "Invalid qty" });
-  if (type !== "IN" && type !== "OUT") return res.status(400).json({ error: "Invalid type" });
+  if (!Number.isFinite(q) || q <= 0)
+    return res.status(400).json({ error: "Invalid qty" });
+  if (type !== "IN" && type !== "OUT")
+    return res.status(400).json({ error: "Invalid type" });
 
-  const item = getItemBySkuLot(String(sku), String(lot));
-  if (!item) return res.status(404).json({ error: "Item not found. Create it first." });
+  const item = await getItemBySkuLot(String(sku), String(lot));
+  if (!item)
+    return res.status(404).json({ error: "Item not found. Create it first." });
 
   const wh = String(warehouse || "MAIN").trim() || "MAIN";
   const loc = String(location || "DEFAULT").trim() || "DEFAULT";
   const b = String(bin || "DEFAULT").trim() || "DEFAULT";
 
   try {
-    addMovementChecked({
+    await addMovementChecked({
       item_id: item.id,
       type,
       qty: q,
@@ -828,23 +925,35 @@ app.post("/api/move", requireAuth, (req, res) => {
       location: loc,
       bin: b,
       operator_user_id: req.user.id,
-      note: note ? String(note).trim() : null
+      note: note ? String(note).trim() : null,
     });
   } catch (e) {
     if (e?.code === "INSUFFICIENT_STOCK") {
-      const onhand = getOnhandForItemAt({ item_id: item.id, warehouse: wh, location: loc, bin: b });
+      const onhand = await getOnhandForItemAt({
+        item_id: item.id,
+        warehouse: wh,
+        location: loc,
+        bin: b,
+      });
       return res.status(409).json({ error: `${e.message}`, onhand });
     }
     return res.status(500).json({ error: "Server error" });
   }
 
-  const row = getStockRows({ warehouse: null }).find(r => r.sku === item.sku && r.lot === item.lot && r.warehouse === wh && r.location === loc && r.bin === b);
+  const row = (await getStockRows({ warehouse: null })).find(
+    (r) =>
+      r.sku === item.sku &&
+      r.lot === item.lot &&
+      r.warehouse === wh &&
+      r.location === loc &&
+      r.bin === b,
+  );
   res.json({ ok: true, onhand: row ? row.qty_onhand : null });
 });
 
 // ---- Exports ----
 app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
-  const rows = getStockRows({ warehouse: null });
+  const rows = await getStockRows({ warehouse: null });
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Stock");
@@ -860,20 +969,23 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     { header: "Bin", key: "bin", width: 14 },
     { header: "IN", key: "qty_in", width: 10 },
     { header: "OUT", key: "qty_out", width: 10 },
-    { header: "OnHand", key: "qty_onhand", width: 10 }
+    { header: "OnHand", key: "qty_onhand", width: 10 },
   ];
   ws.addRows(rows);
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = "A1:L1";
 
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
   res.setHeader("Content-Disposition", `attachment; filename="stock.xlsx"`);
   await wb.xlsx.write(res);
   res.end();
 });
 
 app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
-  const rows = listMovements(5000);
+  const rows = await listMovements(5000);
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Movements");
@@ -888,13 +1000,16 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
     { header: "Lot", key: "lot", width: 18 },
     { header: "Description", key: "description", width: 42 },
     { header: "Operator", key: "operator", width: 18 },
-    { header: "Note", key: "note", width: 24 }
+    { header: "Note", key: "note", width: 24 },
   ];
   ws.addRows(rows);
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = "A1:K1";
 
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
   res.setHeader("Content-Disposition", `attachment; filename="movements.xlsx"`);
   await wb.xlsx.write(res);
   res.end();
@@ -907,14 +1022,25 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
     { header: "SKU", key: "sku", width: 18 },
     { header: "Description", key: "description", width: 42 },
     { header: "Lot", key: "lot", width: 18 },
-    { header: "EntryDate", key: "entry_date", width: 14 }
+    { header: "EntryDate", key: "entry_date", width: 14 },
   ];
-  ws.addRow({ sku: "DKW-12345", description: "Esempio descrizione", lot: "LOT-001", entry_date: "2026-02-23" });
+  ws.addRow({
+    sku: "DKW-12345",
+    description: "Esempio descrizione",
+    lot: "LOT-001",
+    entry_date: "2026-02-23",
+  });
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = "A1:D1";
 
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", `attachment; filename="items-template.xlsx"`);
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="items-template.xlsx"`,
+  );
   await wb.xlsx.write(res);
   res.end();
 });
@@ -922,7 +1048,12 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`QR Stock running on http://localhost:${PORT}`);
-  console.log(`For iPhone on LAN: http://<PC_IP>:${PORT}`);
-});
+
+(async () => {
+  await initDb();
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`QR Stock running on http://localhost:${PORT}`);
+    console.log(`For iPhone on LAN: http://<PC_IP>:${PORT}`);
+  });
+})();
+EOF;
