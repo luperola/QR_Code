@@ -506,15 +506,12 @@ app.get("/labels", requireAuth, async (req, res) => {
       const dataUrl = await QRCode.toDataURL(url, { margin: 1, scale: 6 });
       return `
       <div class="label">
-        <img class="qr" src="${dataUrl}" alt="QR" />
-        <div class="label-text">
-          <div class="mono"><b>${escapeHtml(it.sku)}</b></div>
-          <div class="small">${escapeHtml(it.description)}</div>
-          <div class="small">Lot: <span class="mono">${escapeHtml(it.lot)}</span></div>
-          ${it.entry_date ? `<div class="small">Ingresso: <span class="mono">${escapeHtml(it.entry_date)}</span></div>` : ``}
-          <div class="tiny muted">QR payload: SKU+Lot+Description</div>
-        </div>
-      </div>
+    <img class="qr" src="${dataUrl}" alt="QR" />
+    <div class="label-text">
+      <div class="mono sku"><b>${escapeHtml(it.sku)}</b></div>
+      <div class="mono lot">LOT: ${escapeHtml(it.lot)}</div>
+    </div>
+  </div>
     `;
     }),
   );
