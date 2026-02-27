@@ -58,6 +58,12 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+function formatDate(d) {
+  if (!d) return "";
+  const date = new Date(d);
+  return date.toLocaleDateString("it-IT");
+}
+
 function escapeHtml(s = "") {
   return String(s)
     .replaceAll("&", "&amp;")
@@ -167,7 +173,7 @@ app.get("/", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.lot)}</td>
-      <td>${escapeHtml(r.entry_date || "")}</td>
+     <td>${r.entry_date ? escapeHtml(formatDate(r.entry_date)) : ""}</td>
       <td>${escapeHtml(r.uom || "")}</td>
       <td style="text-align:right">${r.initial_qty ?? 0}</td>
       <td>${escapeHtml(r.warehouse)}</td>
@@ -243,10 +249,10 @@ app.get("/items", requireAuth, async (req, res) => {
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
       <td>${escapeHtml(it.lot)}</td>
-      <td>${escapeHtml(it.entry_date || "")}</td>
+      <td>${it.entry_date ? escapeHtml(formatDate(it.entry_date)) : ""}</td>
       <td>${escapeHtml(it.uom || "")}</td>
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
-      <td>${escapeHtml(it.created_at)}</td>
+      <td>${escapeHtml(formatDate(it.created_at))}</td>
     </tr>
   `,
     )
