@@ -18,8 +18,8 @@ Heroku imposta automaticamente `DATABASE_URL`.
 
 ```bash
 heroku config:set NODE_ENV=production
-heroku config:set SESSION_KEY="<chiave-lunga-random>"
-heroku config:set BASE_URL="https://<nome-app>.herokuapp.com"
+heroku config:set SESSION_KEY="Acmilan00"
+heroku config:set BASE_URL="https://gtsqrcode.herokuapp.com"
 ```
 
 ## 4) Deploy

@@ -1,4 +1,4 @@
-cat > server.js << "EOF";
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -272,7 +272,9 @@ ${nav(req, "items")}
       <div class="form-grid">
         <label>SKU<input name="sku" required placeholder="es. DKW-12345" /></label>
         <label>Lot<input name="lot" required placeholder="es. LOT2026-01" /></label>
-        <label>Data ingresso<input name="entry_date" placeholder="YYYY-MM-DD" /></label>
+        <label>Data ingresso
+  <input name="entry_date" type="date" />
+</label>
         <label>U.M.<input name="uom" placeholder="PC" /></label>
         <label>Quantità iniziale<input name="initial_qty" type="number" step="0.01" value="0" /></label>
         <label class="span2">Descrizione<input name="description" required placeholder="es. Tubo 1.4435 EP 1/2&quot;..." /></label>
@@ -307,6 +309,13 @@ ${nav(req, "items")}
     </div>
   </div>
 </main>
+<script>
+(function(){
+  const el = document.querySelector('input[name="entry_date"]');
+  if (!el) return;
+  if (!el.value) el.value = new Date().toISOString().slice(0,10);
+})();
+</script>
 </body>
 </html>`);
 });
@@ -1056,4 +1065,3 @@ const PORT = process.env.PORT || 3000;
     console.log(`For iPhone on LAN: http://<PC_IP>:${PORT}`);
   });
 })();
-EOF;
