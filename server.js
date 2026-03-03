@@ -58,10 +58,32 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function formatDate(d) {
-  if (!d) return "";
-  const date = new Date(d);
-  return date.toLocaleDateString("it-IT");
+function formatDate(dateValue) {
+  if (!dateValue) return "";
+  const date = new Date(dateValue);
+
+  return date.toLocaleDateString("it-IT", {
+    timeZone: "Europe/Rome",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatDateTimeCET(dateValue) {
+  if (!dateValue) return "";
+
+  const date = new Date(dateValue);
+
+  return date.toLocaleString("it-IT", {
+    timeZone: "Europe/Rome",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function escapeHtml(s = "") {
@@ -727,7 +749,7 @@ app.get("/movements", requireAuth, async (req, res) => {
     .map(
       (m) => `
     <tr>
-      <td>${escapeHtml(m.ts)}</td>
+      <td>${escapeHtml(formatDateTimeCET(m.ts))}</td>
       <td>${escapeHtml(m.type)}</td>
       <td style="text-align:right">${m.qty}</td>
       <td>${escapeHtml(m.warehouse)}</td>
