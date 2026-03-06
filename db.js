@@ -182,6 +182,24 @@ export async function getItemBySkuLot(sku, lot) {
   return rows[0] || null;
 }
 
+export async function deleteItemById(itemId) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM movements WHERE item_id=$1`, [itemId]);
+    const result = await client.query(`DELETE FROM items WHERE id=$1`, [
+      itemId,
+    ]);
+    await client.query("COMMIT");
+    return result.rowCount > 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getOnhandForItemAt(
   { item_id, warehouse, location, bin },
   client = db,

@@ -13,6 +13,7 @@ import {
   listItems,
   getItemById,
   getItemBySkuLot,
+  deleteItemById,
   addMovementChecked,
   getStockRows,
   listMovements,
@@ -269,6 +270,7 @@ ${nav(req, "stock")}
 
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
+  const canDeleteItems = req.user?.role === "admin";
   const rows = items
     .map(
       (it) => `
@@ -280,7 +282,16 @@ app.get("/items", requireAuth, async (req, res) => {
       <td>${escapeHtml(it.uom || "")}</td>
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(formatDate(it.created_at))}</td>
-    </tr>
+     <td>
+        ${
+          canDeleteItems
+            ? `<form method="post" action="/items/${it.id}/delete" onsubmit="return confirm('Confermi eliminazione item e relativi movimenti?');">
+              <button class="btn danger" type="submit">Elimina</button>
+            </form>`
+            : `<span class="muted">Solo admin</span>`
+        }
+      </td>
+      </tr>
   `,
     )
     .join("");
@@ -318,7 +329,6 @@ ${nav(req, "items")}
       </div>
     </form>
   </div>
-
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
     <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Lot, EntryDate/DataIngresso</span>.</p>
@@ -330,13 +340,12 @@ ${nav(req, "items")}
       </div>
     </form>
   </div>
-
   <div class="card">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>SKU</th><th>Descrizione</th><th>Lot</th><th>Data ingresso</th><th>U.M.</th><th>Qty iniziale</th><th>Creato</th></tr></thead>
+       <thead><tr><th>SKU</th><th>Descrizione</th><th>Lot</th><th>Data ingresso</th><th>U.M.</th><th>Qty iniziale</th><th>Creato</th><th>Azioni</th></tr></thead>
         <tbody>
-          ${rows || `<tr><td colspan="7" class="muted">Nessun item.</td></tr>`}
+            ${rows || `<tr><td colspan="8" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -344,6 +353,16 @@ ${nav(req, "items")}
 </main>
 </body>
 </html>`);
+});
+
+app.post("/items/:id/delete", requireAdmin, async (req, res) => {
+  const itemId = Number(req.params.id);
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    return res.status(400).send("Invalid item id");
+  }
+
+  await deleteItemById(itemId);
+  return res.redirect("/items");
 });
 
 app.post("/items", requireAuth, async (req, res) => {
