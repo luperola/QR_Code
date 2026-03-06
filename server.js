@@ -528,9 +528,13 @@ app.get("/labels", requireAuth, async (req, res) => {
     items.map(async (it) => {
       const url = `${baseUrl}/q/${it.id}`;
       const dataUrl = await QRCode.toDataURL(url, {
-        margin: 3,
-        scale: 8,
-        errorCorrectionLevel: "H",
+        margin: 4,
+        width: 420,
+        errorCorrectionLevel: "M",
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
       });
 
       return `
@@ -567,7 +571,7 @@ ${nav(req, "labels")}
 
 <main class="container">
   <h1>Stampa QR</h1>
-  <p class="muted no-print">QR corto, più leggibile anche da Android.</p>
+  <p class="muted no-print">QR ottimizzato per lettura rapida su Android/iPhone (Lens, fotocamera, app scanner).</p>
   <div class="row no-print">
     <button class="btn" onclick="window.print()">Stampa</button>
     <a class="btn secondary" href="/items">Aggiungi items</a>
