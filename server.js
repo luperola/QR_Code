@@ -11,6 +11,7 @@ import {
   initDb,
   upsertItem,
   listItems,
+  getItemById,
   getItemBySkuLot,
   addMovementChecked,
   getStockRows,
@@ -96,18 +97,21 @@ function escapeHtml(s = "") {
 }
 
 async function requireAuth(req, res, next) {
-  if (!req.session?.user_id)
+  if (!req.session?.user_id) {
     return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  }
   req.user = await getUserById(req.session.user_id);
   return next();
 }
 
 async function requireAdmin(req, res, next) {
-  if (!req.session?.user_id)
+  if (!req.session?.user_id) {
     return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  }
   const u = await getUserById(req.session.user_id);
-  if (!u || u.role !== "admin")
+  if (!u || u.role !== "admin") {
     return res.status(403).send("Forbidden (admin only)");
+  }
   req.user = u;
   return next();
 }
@@ -164,8 +168,9 @@ app.get("/login", (req, res) => {
 app.post("/login", async (req, res) => {
   const { pin, next } = req.body || {};
   const u = await getUserByPin(String(pin || ""));
-  if (!u)
+  if (!u) {
     return res.status(401).send("PIN non valido. <a href='/login'>Riprova</a>");
+  }
   req.session.user_id = u.id;
   res.redirect(next || "/");
 });
@@ -195,7 +200,7 @@ app.get("/", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.lot)}</td>
-     <td>${r.entry_date ? escapeHtml(formatDate(r.entry_date)) : ""}</td>
+      <td>${r.entry_date ? escapeHtml(formatDate(r.entry_date)) : ""}</td>
       <td>${escapeHtml(r.uom || "")}</td>
       <td style="text-align:right">${r.initial_qty ?? 0}</td>
       <td>${escapeHtml(r.warehouse)}</td>
@@ -221,7 +226,7 @@ app.get("/", requireAuth, async (req, res) => {
 ${nav(req, "stock")}
 
 <main class="container">
-  <h1>Stock (leggibile anche da iPhone)</h1>
+  <h1>Stock (leggibile anche da iPhone e Android)</h1>
   <p class="muted">Apri dal telefono: <span class="mono">${escapeHtml(getBaseUrl(req))}</span></p>
 
   <div class="card pad">
@@ -301,8 +306,8 @@ ${nav(req, "items")}
         <label>SKU<input name="sku" required placeholder="es. DKW-12345" /></label>
         <label>Lot<input name="lot" required placeholder="es. LOT2026-01" /></label>
         <label>Data ingresso
-  <input name="entry_date" type="date" required />
-</label>
+          <input name="entry_date" type="date" required />
+        </label>
         <label>U.M.<input name="uom" placeholder="PC" /></label>
         <label>Quantità iniziale<input name="initial_qty" type="number" step="0.01" value="0" /></label>
         <label class="span2">Descrizione<input name="description" required placeholder="es. Tubo 1.4435 EP 1/2&quot;..." /></label>
@@ -337,7 +342,6 @@ ${nav(req, "items")}
     </div>
   </div>
 </main>
-<script>
 </body>
 </html>`);
 });
@@ -345,8 +349,10 @@ ${nav(req, "items")}
 app.post("/items", requireAuth, async (req, res) => {
   const { sku, description, lot, entry_date, uom, initial_qty } =
     req.body || {};
-  if (!sku || !description || !lot)
+  if (!sku || !description || !lot) {
     return res.status(400).send("Missing fields");
+  }
+
   await upsertItem({
     sku: String(sku).trim(),
     description: String(description).trim(),
@@ -355,6 +361,7 @@ app.post("/items", requireAuth, async (req, res) => {
     uom: (uom ? String(uom).trim() : "PC") || "PC",
     initial_qty: Number(initial_qty || 0),
   });
+
   res.redirect("/items");
 });
 
@@ -365,12 +372,9 @@ app.post(
   async (req, res) => {
     if (!req.file) return res.status(400).send("No file uploaded");
 
-    // cellDates:true -> if the sheet stores dates as dates, xlsx will expose them as Date objects
     const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
     const sheetName = wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
-
-    // raw:true keeps numbers/dates as-is (e.g., Excel serial numbers, Date objects)
     const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
 
     const norm = (s) =>
@@ -378,7 +382,6 @@ app.post(
         .trim()
         .toLowerCase();
 
-    // Determine 1904 date system if present
     const date1904 = !!(
       wb.Workbook &&
       wb.Workbook.WBProps &&
@@ -386,7 +389,6 @@ app.post(
     );
 
     function toIsoDate(d) {
-      // YYYY-MM-DD in local time (stable for inventory purposes)
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");
       const dd = String(d.getDate()).padStart(2, "0");
@@ -396,14 +398,11 @@ app.post(
     function parseEntryDate(value) {
       if (value === null || value === undefined) return null;
 
-      // 1) Date object
       if (value instanceof Date && !Number.isNaN(value.getTime())) {
         return toIsoDate(value);
       }
 
-      // 2) Excel serial number (e.g., 45234)
       if (typeof value === "number" && Number.isFinite(value)) {
-        // Use xlsx SSF helper
         const dc = XLSX.SSF.parse_date_code(value, { date1904 });
         if (dc && dc.y && dc.m && dc.d) {
           const d = new Date(dc.y, dc.m - 1, dc.d);
@@ -412,21 +411,17 @@ app.post(
         return null;
       }
 
-      // 3) String: accept ISO (YYYY-MM-DD) or Italian (DD/MM/YYYY)
       const s = String(value).trim();
       if (!s) return null;
 
-      // Formula like =TODAY() / =NOW() -> use today's date
       if (s.startsWith("=")) {
         const today = new Date();
         return toIsoDate(today);
       }
 
-      // ISO
       const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (iso) return s;
 
-      // Italian dd/mm/yyyy or dd-mm-yyyy
       const it = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
       if (it) {
         const dd = Number(it[1]);
@@ -436,31 +431,31 @@ app.post(
         if (!Number.isNaN(d.getTime())) return toIsoDate(d);
       }
 
-      // Fallback: try Date.parse (e.g., "2026/02/24")
       const t = Date.parse(s);
       if (!Number.isNaN(t)) return toIsoDate(new Date(t));
 
       return null;
     }
 
-    let ok = 0,
-      skipped = 0;
+    let ok = 0;
+    let skipped = 0;
 
     for (const r of rows) {
       const keys = Object.keys(r);
 
       const get = (...names) => {
         const wanted = names.map((n) => norm(n));
-        // exact match
+
         for (const n of wanted) {
           const k = keys.find((k) => norm(k) === n);
           if (k) return r[k];
         }
-        // contains match (handles headers like "Description/Descrizione")
+
         for (const n of wanted) {
           const k = keys.find((k) => norm(k).includes(n));
           if (k) return r[k];
         }
+
         return "";
       };
 
@@ -507,6 +502,7 @@ app.post(
         skipped++;
         continue;
       }
+
       await upsertItem({
         sku,
         description,
@@ -523,24 +519,29 @@ app.post(
     );
   },
 );
+
 app.get("/labels", requireAuth, async (req, res) => {
   const items = await listItems();
   const baseUrl = getBaseUrl(req);
 
-  // QR payload requirement: SKU + Lot + Description (embedded in URL so iPhone camera can open)
   const cards = await Promise.all(
     items.map(async (it) => {
-      const url = `${baseUrl}/scanlink?sku=${encodeURIComponent(it.sku)}&lot=${encodeURIComponent(it.lot)}&d=${encodeURIComponent(it.description)}`;
-      const dataUrl = await QRCode.toDataURL(url, { margin: 1, scale: 6 });
+      const url = `${baseUrl}/q/${it.id}`;
+      const dataUrl = await QRCode.toDataURL(url, {
+        margin: 3,
+        scale: 8,
+        errorCorrectionLevel: "H",
+      });
+
       return `
       <div class="label">
-    <img class="qr" src="${dataUrl}" alt="QR" />
-    <div class="label-text">
-      <div class="mono sku"><b>${escapeHtml(it.sku)}</b></div>
-      <div class="mono lot">LOT: ${escapeHtml(it.lot)}</div>
-    </div>
-  </div>
-    `;
+        <img class="qr" src="${dataUrl}" alt="QR" />
+        <div class="label-text">
+          <div class="mono sku"><b>${escapeHtml(it.sku)}</b></div>
+          <div class="mono lot">LOT: ${escapeHtml(it.lot)}</div>
+        </div>
+      </div>
+      `;
     }),
   );
 
@@ -566,7 +567,7 @@ ${nav(req, "labels")}
 
 <main class="container">
   <h1>Stampa QR</h1>
-  <p class="muted no-print">Inquadra con la <b>Fotocamera iPhone</b>: si apre la pagina per fare IN/OUT.</p>
+  <p class="muted no-print">QR corto, più leggibile anche da Android.</p>
   <div class="row no-print">
     <button class="btn" onclick="window.print()">Stampa</button>
     <a class="btn secondary" href="/items">Aggiungi items</a>
@@ -580,12 +581,16 @@ ${nav(req, "labels")}
 </html>`);
 });
 
-app.get("/scanlink", requireAuth, async (req, res) => {
-  const { sku, lot } = req.query;
-  if (!sku || !lot) return res.status(400).send("Missing sku/lot");
-  const item = await getItemBySkuLot(String(sku), String(lot));
-  if (!item)
-    return res.status(404).send("Item not found. Create it in /items first.");
+app.get("/q/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).send("Invalid item id");
+  }
+
+  const item = await getItemById(id);
+  if (!item) {
+    return res.status(404).send("Item not found.");
+  }
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -647,29 +652,33 @@ app.get("/scanlink", requireAuth, async (req, res) => {
   f.location.value = get('location') || 'DEFAULT';
   f.bin.value = get('bin') || 'DEFAULT';
 })();
+
 function saveLoc(payload){
   localStorage.setItem('qrstock_warehouse', payload.warehouse);
   localStorage.setItem('qrstock_location', payload.location);
   localStorage.setItem('qrstock_bin', payload.bin);
 }
+
 function showMsg(text, ok){
   const el = document.getElementById('msg');
   el.style.display = 'block';
   el.className = 'flash ' + (ok ? 'ok' : 'err');
   el.textContent = text;
 }
+
 async function sendMove(type) {
   const form = document.getElementById('moveForm');
   const data = new FormData(form);
+
   const payload = {
     sku: data.get('sku'),
     lot: data.get('lot'),
     qty: Number(data.get('qty') || 1),
     type,
-    warehouse: String(data.get('warehouse')||'MAIN').trim() || 'MAIN',
-    location: String(data.get('location')||'DEFAULT').trim() || 'DEFAULT',
-    bin: String(data.get('bin')||'DEFAULT').trim() || 'DEFAULT',
-    note: String(data.get('note')||'').trim()
+    warehouse: String(data.get('warehouse') || 'MAIN').trim() || 'MAIN',
+    location: String(data.get('location') || 'DEFAULT').trim() || 'DEFAULT',
+    bin: String(data.get('bin') || 'DEFAULT').trim() || 'DEFAULT',
+    note: String(data.get('note') || '').trim()
   };
 
   saveLoc(payload);
@@ -683,14 +692,27 @@ async function sendMove(type) {
 
   const out = await res.json().catch(() => ({}));
   if (!res.ok) {
-    showMsg("Errore: " + (out.error || res.statusText) + (out.onhand!=null ? " | on-hand=" + out.onhand : ""), false);
+    showMsg("Errore: " + (out.error || res.statusText) + (out.onhand != null ? " | on-hand=" + out.onhand : ""), false);
     return;
   }
-  showMsg("OK ✓ Nuovo on-hand ("+payload.warehouse+"/"+payload.location+"/"+payload.bin+"): " + out.onhand, true);
+
+  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "/" + payload.location + "/" + payload.bin + "): " + out.onhand, true);
 }
 </script>
 </body>
 </html>`);
+});
+
+app.get("/scanlink", requireAuth, async (req, res) => {
+  const { sku, lot } = req.query;
+  if (!sku || !lot) return res.status(400).send("Missing sku/lot");
+
+  const item = await getItemBySkuLot(String(sku), String(lot));
+  if (!item) {
+    return res.status(404).send("Item not found. Create it in /items first.");
+  }
+
+  return res.redirect(`/q/${item.id}`);
 });
 
 app.get("/scan", requireAuth, (req, res) => {
@@ -710,7 +732,7 @@ ${nav(req, "")}
   <div class="card pad">
     <p class="muted">
       Questo scanner usa la camera live dentro il browser. Su iPhone funziona solo in <b>HTTPS</b> (o localhost).
-      Se non hai HTTPS, usa la <b>Fotocamera</b> con le etichette: aprirà <span class="mono">/scanlink</span>.
+      Se non hai HTTPS, usa la <b>Fotocamera</b> con le etichette.
     </p>
     <div id="reader" style="width: 100%;"></div>
     <div id="scanMsg" class="muted" style="margin-top:10px;"></div>
@@ -724,11 +746,18 @@ const msg = document.getElementById('scanMsg');
 function handleDecodedText(decodedText) {
   try {
     const url = new URL(decodedText);
+
+    if (url.pathname.startsWith('/q/')) {
+      window.location.href = url.pathname;
+      return;
+    }
+
     if (url.pathname.endsWith('/scanlink')) {
       window.location.href = url.pathname + url.search;
       return;
     }
   } catch (e) {}
+
   msg.textContent = "QR letto ma non riconosciuto: " + decodedText;
 }
 
@@ -884,17 +913,20 @@ ${nav(req, "admin")}
 app.post("/admin/users/create", requireAdmin, async (req, res) => {
   const { name, pin, role } = req.body || {};
   if (!name || !pin) return res.status(400).send("Missing fields");
+
   await createUser({
     name: String(name).trim(),
     pin: String(pin).trim(),
     role: role === "admin" ? "admin" : "operator",
   });
+
   res.redirect("/admin");
 });
 
 app.post("/admin/users/reset", requireAdmin, async (req, res) => {
   const { user_id, pin } = req.body || {};
   if (!user_id || !pin) return res.status(400).send("Missing fields");
+
   await resetUserPin({ user_id: Number(user_id), pin: String(pin).trim() });
   res.redirect("/admin");
 });
@@ -902,6 +934,7 @@ app.post("/admin/users/reset", requireAdmin, async (req, res) => {
 app.post("/admin/users/delete", requireAdmin, async (req, res) => {
   const { user_id } = req.body || {};
   if (!user_id) return res.status(400).send("Missing user_id");
+
   await deleteUser({ user_id: Number(user_id) });
   res.redirect("/admin");
 });
@@ -915,10 +948,12 @@ app.get("/api/stock", requireAuth, async (req, res) => {
 app.get("/api/warehouses", requireAuth, async (req, res) => {
   res.json({ warehouses: await listWarehouses() });
 });
+
 app.get("/api/locations", requireAuth, async (req, res) => {
   const warehouse = String(req.query.warehouse || "MAIN");
   res.json({ locations: await listLocations(warehouse) });
 });
+
 app.get("/api/bins", requireAuth, async (req, res) => {
   const warehouse = String(req.query.warehouse || "MAIN");
   const location = String(req.query.location || "DEFAULT");
@@ -928,17 +963,24 @@ app.get("/api/bins", requireAuth, async (req, res) => {
 app.post("/api/move", requireAuth, async (req, res) => {
   const { sku, lot, type, qty, warehouse, location, bin, note } =
     req.body || {};
-  if (!sku || !lot || !type)
+
+  if (!sku || !lot || !type) {
     return res.status(400).json({ error: "Missing sku/lot/type" });
+  }
+
   const q = Number(qty || 1);
-  if (!Number.isFinite(q) || q <= 0)
+  if (!Number.isFinite(q) || q <= 0) {
     return res.status(400).json({ error: "Invalid qty" });
-  if (type !== "IN" && type !== "OUT")
+  }
+
+  if (type !== "IN" && type !== "OUT") {
     return res.status(400).json({ error: "Invalid type" });
+  }
 
   const item = await getItemBySkuLot(String(sku), String(lot));
-  if (!item)
+  if (!item) {
     return res.status(404).json({ error: "Item not found. Create it first." });
+  }
 
   const wh = String(warehouse || "MAIN").trim() || "MAIN";
   const loc = String(location || "DEFAULT").trim() || "DEFAULT";
@@ -976,6 +1018,7 @@ app.post("/api/move", requireAuth, async (req, res) => {
       r.location === loc &&
       r.bin === b,
   );
+
   res.json({ ok: true, onhand: row ? row.qty_onhand : null });
 });
 
@@ -1081,6 +1124,6 @@ const PORT = process.env.PORT || 3000;
   await initDb();
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`QR Stock running on http://localhost:${PORT}`);
-    console.log(`For iPhone on LAN: http://<PC_IP>:${PORT}`);
+    console.log(`For iPhone/Android on LAN: http://<PC_IP>:${PORT}`);
   });
 })();

@@ -162,11 +162,16 @@ export async function upsertItem({
 
 export async function listItems() {
   const { rows } = await db.query(`
-    SELECT sku, description, lot, entry_date, uom, initial_qty, created_at
+    SELECT id, sku, description, lot, entry_date, uom, initial_qty, created_at
     FROM items
     ORDER BY created_at DESC
   `);
   return rows;
+}
+
+export async function getItemById(id) {
+  const { rows } = await db.query(`SELECT * FROM items WHERE id=$1`, [id]);
+  return rows[0] || null;
 }
 
 export async function getItemBySkuLot(sku, lot) {
@@ -207,6 +212,7 @@ export async function addMovementChecked({
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+
     if (type === "OUT") {
       const onhand = await getOnhandForItemAt(
         { item_id, warehouse, location, bin },
@@ -225,7 +231,7 @@ export async function addMovementChecked({
       `
       INSERT INTO movements (item_id, type, qty, warehouse, location, bin, operator_user_id, note)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    `,
+      `,
       [
         item_id,
         type,
@@ -237,6 +243,7 @@ export async function addMovementChecked({
         note || null,
       ],
     );
+
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -257,7 +264,7 @@ export async function listMovements(limit = 200) {
     LEFT JOIN users u ON u.id = m.operator_user_id
     ORDER BY m.ts DESC, m.id DESC
     LIMIT $1
-  `,
+    `,
     [limit],
   );
   return rows;
@@ -293,7 +300,7 @@ export async function getStockRows({ warehouse = null } = {}) {
       (initial_qty + qty_in - qty_out) AS qty_onhand
     FROM agg
     ORDER BY sku, lot, warehouse, location, bin
-  `,
+    `,
     params,
   );
   return rows;
@@ -315,7 +322,7 @@ export async function listLocations(warehouse) {
     SELECT DISTINCT location FROM movements WHERE warehouse=$1
     UNION SELECT 'DEFAULT'
     ORDER BY location
-  `,
+    `,
     [warehouse],
   );
   return rows.map((r) => r.location);
@@ -327,7 +334,7 @@ export async function listBins(warehouse, location) {
     SELECT DISTINCT bin FROM movements WHERE warehouse=$1 AND location=$2
     UNION SELECT 'DEFAULT'
     ORDER BY bin
-  `,
+    `,
     [warehouse, location],
   );
   return rows.map((r) => r.bin);

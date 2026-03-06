@@ -306,8 +306,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .qr {
-  width: 24mm;
-  height: 24mm;
+  width: 26mm;
+  height: 26mm;
 }
 
 .label-text {
