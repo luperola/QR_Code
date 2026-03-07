@@ -301,13 +301,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   padding: 2.5mm;
   display: flex;
   align-items: center;
-  gap: 2.5mm;
+  gap: 3 mm;
   background: #fff;
 }
 
 .qr {
-  width: 26mm;
-  height: 26mm;
+  width: 30mm;
+  height: 30mm;
 }
 
 .label-text {
@@ -316,11 +316,16 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .sku {
+  font-size: 11pt;
+  line-height: 1.1;
+  color: #000;
+  font-weight: 700;
+}
+
+.lot {
   font-size: 10pt;
   line-height: 1.1;
-}
-.lot {
-  font-size: 9pt;
-  line-height: 1.1;
   margin-top: 1.2mm;
+  color: #000;
+  font-weight: 600;
 }

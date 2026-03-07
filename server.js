@@ -547,9 +547,9 @@ app.get("/labels", requireAuth, async (req, res) => {
     items.map(async (it) => {
       const url = `${baseUrl}/q/${it.id}`;
       const dataUrl = await QRCode.toDataURL(url, {
-        margin: 4,
+        margin: 8,
         width: 420,
-        errorCorrectionLevel: "M",
+        errorCorrectionLevel: "H",
         color: {
           dark: "#000000",
           light: "#FFFFFF",
