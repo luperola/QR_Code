@@ -559,6 +559,12 @@ app.post(
 
 app.get("/bom", requireAuth, async (req, res) => {
   const headers = await listBomHeaders();
+  const equipmentOptions = headers
+    .map(
+      (h) =>
+        `<option value="${escapeHtml(h.equipment)}">${escapeHtml(h.equipment)}</option>`,
+    )
+    .join("");
   const rows = headers
     .map(
       (h) => `
@@ -598,7 +604,10 @@ ${nav(req, "bom")}
     <form method="post" action="/bom/import" enctype="multipart/form-data">
       <div class="form-grid">
         <label>Equipment
-          <input name="equipment" required placeholder="es. DPROFAB4" />
+         <input name="equipment" required placeholder="es. DPROFAB4" list="equipment-list" />
+          <datalist id="equipment-list">
+            ${equipmentOptions}
+          </datalist>
         </label>
         <label>File Excel BOM
           <input type="file" name="file" accept=".xlsx,.xls" required />
