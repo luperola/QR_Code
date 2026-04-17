@@ -54,9 +54,42 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_movements_item ON movements(item_id);
     CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
     CREATE INDEX IF NOT EXISTS idx_movements_wh ON movements(warehouse, location, bin);
-  `);
+  
+CREATE TABLE IF NOT EXISTS bom_headers (
+      id BIGSERIAL PRIMARY KEY,
+      equipment TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
+    CREATE TABLE IF NOT EXISTS bom_rows (
+      id BIGSERIAL PRIMARY KEY,
+      bom_id BIGINT NOT NULL REFERENCES bom_headers(id) ON DELETE CASCADE,
+      sku TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      qty_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+      qty_reserved DOUBLE PRECISION NOT NULL DEFAULT 0,
+      availability TEXT NOT NULL DEFAULT 'MISSING',
+      reservation_note TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(bom_id, sku)
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_reservations (
+      id BIGSERIAL PRIMARY KEY,
+      equipment TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      qty_reserved DOUBLE PRECISION NOT NULL CHECK(qty_reserved >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(equipment, sku)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
+
+
+  const { rows } = await db.query(SELECT COUNT(*)::int AS n FROM users);
   if (rows[0].n === 0) {
     const hash = hashPin("1234");
     await db.query(
@@ -67,6 +100,10 @@ export async function initDb() {
       "Seeded default admin PIN = 1234 (change it in Admin → Users).",
     );
   }
+}
+
+function normalizeEquipment(equipment) {
+  return String(equipment || "").trim().toUpperCase();
 }
 
 export function hashPin(pin) {
@@ -176,7 +213,7 @@ export async function getItemById(id) {
 
 export async function getItemBySkuLot(sku, lot) {
   const { rows } = await db.query(
-    `SELECT * FROM items WHERE sku=$1 AND lot=$2`,
+    SELECT * FROM items WHERE sku=$1 AND lot=$2,
     [sku, lot],
   );
   return rows[0] || null;
@@ -186,8 +223,8 @@ export async function deleteItemById(itemId) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`DELETE FROM movements WHERE item_id=$1`, [itemId]);
-    const result = await client.query(`DELETE FROM items WHERE id=$1`, [
+    await client.query(DELETE FROM movements WHERE item_id=$1, [itemId]);
+    const result = await client.query(DELETE FROM items WHERE id=$1, [
       itemId,
     ]);
     await client.query("COMMIT");
@@ -238,7 +275,7 @@ export async function addMovementChecked({
       );
       if (onhand < qty) {
         const err = new Error(
-          `Stock insufficiente: on-hand=${onhand}, richiesto OUT=${qty}`,
+          Stock insufficiente: on-hand=${onhand}, richiesto OUT=${qty},
         );
         err.code = "INSUFFICIENT_STOCK";
         throw err;
@@ -246,10 +283,9 @@ export async function addMovementChecked({
     }
 
     await client.query(
-      `
       INSERT INTO movements (item_id, type, qty, warehouse, location, bin, operator_user_id, note)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `,
+      ,
       [
         item_id,
         type,
@@ -273,7 +309,6 @@ export async function addMovementChecked({
 
 export async function listMovements(limit = 200) {
   const { rows } = await db.query(
-    `
     SELECT m.ts, m.type, m.qty, m.warehouse, m.location, m.bin, m.note,
            i.sku, i.lot, i.description,
            u.name AS operator
@@ -322,6 +357,186 @@ export async function getStockRows({ warehouse = null } = {}) {
     params,
   );
   return rows;
+}
+
+export async function listStockReservations() {
+  const { rows } = await db.query(`
+    SELECT equipment, sku, qty_reserved
+    FROM stock_reservations
+    ORDER BY sku, equipment
+  `);
+  return rows;
+}
+
+export async function listBomHeaders() {
+  const { rows } = await db.query(`
+    SELECT h.equipment, h.created_at, h.updated_at, COUNT(r.id)::int AS rows_count
+    FROM bom_headers h
+    LEFT JOIN bom_rows r ON r.bom_id = h.id
+    GROUP BY h.id
+    ORDER BY h.updated_at DESC, h.equipment
+  `);
+  return rows;
+}
+
+export async function getBomByEquipment(equipment) {
+  const eq = normalizeEquipment(equipment);
+  if (!eq) return null;
+
+  const h = await db.query(
+    `SELECT id, equipment, created_at, updated_at FROM bom_headers WHERE equipment=$1`,
+    [eq],
+  );
+  const header = h.rows[0];
+  if (!header) return null;
+
+  const rows = await db.query(
+    `
+    SELECT sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at
+    FROM bom_rows
+    WHERE bom_id=$1
+    ORDER BY sku
+    `,
+    [header.id],
+  );
+
+  return { ...header, rows: rows.rows };
+}
+
+export async function upsertBomFromRows(equipment, rows) {
+  const eq = normalizeEquipment(equipment);
+  if (!eq) {
+    throw new Error("Equipment mancante");
+  }
+
+  const compactRows = rows
+    .map((r) => ({
+      sku: String(r.sku || "").trim(),
+      description: String(r.description || "").trim(),
+      qty_required: Number(r.qty_required || 0),
+    }))
+    .filter((r) => r.sku && Number.isFinite(r.qty_required) && r.qty_required > 0);
+
+  const aggregated = new Map();
+  for (const r of compactRows) {
+    const prev = aggregated.get(r.sku) || {
+      sku: r.sku,
+      description: r.description,
+      qty_required: 0,
+    };
+    prev.qty_required += r.qty_required;
+    if (!prev.description && r.description) prev.description = r.description;
+    aggregated.set(r.sku, prev);
+  }
+
+  const bomRows = [...aggregated.values()];
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const created = await client.query(
+      `
+      INSERT INTO bom_headers (equipment)
+      VALUES ($1)
+      ON CONFLICT (equipment) DO UPDATE SET updated_at=NOW()
+      RETURNING id, equipment
+      `,
+      [eq],
+    );
+    const bomId = created.rows[0].id;
+
+    await client.query(`DELETE FROM stock_reservations WHERE equipment=$1`, [eq]);
+    await client.query(`DELETE FROM bom_rows WHERE bom_id=$1`, [bomId]);
+
+    const totals = await client.query(
+      `
+      WITH onhand AS (
+        SELECT i.sku,
+               SUM(i.initial_qty)
+               + COALESCE(SUM(CASE WHEN m.type='IN' THEN m.qty END),0)
+               - COALESCE(SUM(CASE WHEN m.type='OUT' THEN m.qty END),0) AS qty_onhand
+        FROM items i
+        LEFT JOIN movements m ON m.item_id=i.id
+        GROUP BY i.sku
+      )
+      SELECT sku, qty_onhand FROM onhand
+      `,
+    );
+
+    const reservedTotals = await client.query(
+      `
+      SELECT sku, SUM(qty_reserved) AS qty_reserved
+      FROM stock_reservations
+      GROUP BY sku
+      `,
+    );
+
+    const onhandBySku = new Map(
+      totals.rows.map((r) => [r.sku, Number(r.qty_onhand || 0)]),
+    );
+    const alreadyReservedBySku = new Map(
+      reservedTotals.rows.map((r) => [r.sku, Number(r.qty_reserved || 0)]),
+    );
+    const assignedNowBySku = new Map();
+
+    for (const row of bomRows) {
+      const onhand = onhandBySku.get(row.sku) || 0;
+      const reservedFromOthers = alreadyReservedBySku.get(row.sku) || 0;
+      const assignedNow = assignedNowBySku.get(row.sku) || 0;
+      const freeQty = Math.max(0, onhand - reservedFromOthers - assignedNow);
+      const qtyReserved = Math.max(0, Math.min(row.qty_required, freeQty));
+
+      assignedNowBySku.set(row.sku, assignedNow + qtyReserved);
+
+      let availability = "MISSING";
+      if (qtyReserved >= row.qty_required) availability = "OK";
+      else if (qtyReserved > 0) availability = "PARTIAL";
+
+      const note =
+        availability === "OK"
+          ? "Disponibile a stock"
+          : availability === "PARTIAL"
+            ? `Disponibile solo ${qtyReserved} su ${row.qty_required}`
+            : "Non disponibile a stock";
+
+      await client.query(
+        `
+        INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+        `,
+        [
+          bomId,
+          row.sku,
+          row.description || "",
+          row.qty_required,
+          qtyReserved,
+          availability,
+          note,
+        ],
+      );
+
+      if (qtyReserved > 0) {
+        await client.query(
+          `
+          INSERT INTO stock_reservations (equipment, sku, qty_reserved, updated_at)
+          VALUES ($1,$2,$3,NOW())
+          `,
+          [eq, row.sku, qtyReserved],
+        );
+      }
+    }
+
+    await client.query(`UPDATE bom_headers SET updated_at=NOW() WHERE id=$1`, [bomId]);
+    await client.query("COMMIT");
+
+    return { equipment: eq, rows_count: bomRows.length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function listWarehouses() {

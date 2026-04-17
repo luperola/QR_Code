@@ -27,6 +27,10 @@ import {
   listLocations,
   listBins,
   getOnhandForItemAt,
+  listBomHeaders,
+  getBomByEquipment,
+  upsertBomFromRows,
+  listStockReservations,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -131,6 +135,7 @@ function nav(req, active) {
     <a href="/items" class="${active === "items" ? "active" : ""}">Items</a>
     <a href="/labels" class="${active === "labels" ? "active" : ""}">Stampa QR</a>
     <a href="/movements" class="${active === "movements" ? "active" : ""}">Movimenti</a>
+     <a href="/bom" class="${active === "bom" ? "active" : ""}">BOM</a>
     <a href="/admin" class="${active === "admin" ? "active" : ""}">Admin</a>
     ${who}
   </nav>
@@ -186,6 +191,18 @@ app.get("/", requireAuth, async (req, res) => {
   const wh = req.query.warehouse ? String(req.query.warehouse) : "";
   const stock = await getStockRows({ warehouse: wh || null });
   const whList = await listWarehouses();
+  const reservations = await listStockReservations();
+  const reservedTotals = new Map();
+  const reservedBySku = new Map();
+
+  for (const r of reservations) {
+    const prev = reservedTotals.get(r.sku) || 0;
+    reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
+
+    const list = reservedBySku.get(r.sku) || [];
+    list.push(`${r.equipment}: ${Number(r.qty_reserved || 0)}`);
+    reservedBySku.set(r.sku, list);
+  }
 
   const whOptions = whList
     .map(
@@ -210,6 +227,9 @@ app.get("/", requireAuth, async (req, res) => {
       <td style="text-align:right">${r.qty_in}</td>
       <td style="text-align:right">${r.qty_out}</td>
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
+      <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
+      <td style="text-align:right">${Math.max(0, Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0))}</td>
+      <td>${escapeHtml((reservedBySku.get(r.sku) || []).join(" • "))}</td>
     </tr>
   `,
     )
@@ -254,11 +274,11 @@ ${nav(req, "stock")}
           <tr>
             <th>SKU</th><th>Descrizione</th><th>Lot</th><th>Data ingresso</th><th>U.M.</th><th>Qty iniziale</th>
             <th>Warehouse</th><th>Location</th><th>Bin</th>
-            <th>IN</th><th>OUT</th><th>On hand</th>
+           <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || `<tr><td colspan="12" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
+         ${rows || `<tr><td colspan="15" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -539,6 +559,188 @@ app.post(
   },
 );
 
+app.get("/bom", requireAuth, async (req, res) => {
+  const headers = await listBomHeaders();
+  const rows = headers
+    .map(
+      (h) => `
+    <tr>
+      <td><a class="mono" href="/bom/${encodeURIComponent(h.equipment)}">${escapeHtml(h.equipment)}</a></td>
+      <td style="text-align:right">${h.rows_count}</td>
+      <td>${escapeHtml(formatDateTimeCET(h.updated_at))}</td>
+      <td><a class="btn secondary" href="/export/bom/${encodeURIComponent(h.equipment)}.xlsx">Export</a></td>
+    </tr>
+  `,
+    )
+    .join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BOM • QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "bom")}
+
+<main class="container">
+  <h1>BOM per equipment</h1>
+  <div class="card pad">
+    <h2>Carica BOM Excel</h2>
+    <p class="muted">Prima indica l'equipment (es. <span class="mono">DPROFAB4</span>), poi carica il file. Se l'equipment esiste già, il BOM verrà aggiornato.</p>
+    <form method="post" action="/bom/import" enctype="multipart/form-data">
+      <div class="form-grid">
+        <label>Equipment
+          <input name="equipment" required placeholder="es. DPROFAB4" />
+        </label>
+        <label>File Excel BOM
+          <input type="file" name="file" accept=".xlsx,.xls" required />
+        </label>
+      </div>
+      <div class="row">
+        <button class="btn ok" type="submit">Importa BOM</button>
+      </div>
+    </form>
+    <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Qty/Quantità</span>.</p>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Equipment</th><th>Righe BOM</th><th>Ultimo aggiornamento</th><th>Azioni</th></tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="4" class="muted">Nessun BOM caricato.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</body>
+</html>`);
+});
+
+app.post(
+  "/bom/import",
+  requireAuth,
+  upload.single("file"),
+  async (req, res) => {
+    if (!req.file) return res.status(400).send("No file uploaded");
+    const equipment = String(req.body?.equipment || "").trim();
+    if (!equipment) return res.status(400).send("Equipment mancante");
+
+    const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const sourceRows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+
+    const norm = (s) =>
+      String(s || "")
+        .trim()
+        .toLowerCase();
+
+    const parsedRows = [];
+    let skipped = 0;
+    for (const row of sourceRows) {
+      const keys = Object.keys(row);
+      const get = (...names) => {
+        const wanted = names.map((n) => norm(n));
+        for (const n of wanted) {
+          const exact = keys.find((k) => norm(k) === n);
+          if (exact) return row[exact];
+        }
+        for (const n of wanted) {
+          const partial = keys.find((k) => norm(k).includes(n));
+          if (partial) return row[partial];
+        }
+        return "";
+      };
+
+      const sku = String(get("SKU", "Sku")).trim();
+      const description = String(get("Description", "Descrizione")).trim();
+      const qtyRaw = get(
+        "Qty",
+        "Quantity",
+        "Quantita",
+        "Quantità",
+        "QTY",
+        "Qta",
+      );
+      const qtyRequired =
+        typeof qtyRaw === "number"
+          ? qtyRaw
+          : Number(String(qtyRaw || "").replace(",", "."));
+
+      if (!sku || !Number.isFinite(qtyRequired) || qtyRequired <= 0) {
+        skipped++;
+        continue;
+      }
+      parsedRows.push({ sku, description, qty_required: qtyRequired });
+    }
+
+    const result = await upsertBomFromRows(equipment, parsedRows);
+    res.send(
+      `Import BOM completato per equipment ${escapeHtml(result.equipment)}. Righe valide=${result.rows_count}, righe ignorate=${skipped}. <a href="/bom/${encodeURIComponent(result.equipment)}">Apri BOM</a>`,
+    );
+  },
+);
+
+app.get("/bom/:equipment", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const bom = await getBomByEquipment(equipment);
+  if (!bom) return res.status(404).send("BOM non trovato");
+
+  const rows = bom.rows
+    .map(
+      (r) => `
+    <tr>
+      <td>${escapeHtml(r.sku)}</td>
+      <td>${escapeHtml(r.description || "")}</td>
+      <td style="text-align:right">${r.qty_required}</td>
+      <td style="text-align:right">${r.qty_reserved}</td>
+      <td>${escapeHtml(r.availability)}</td>
+      <td>${escapeHtml(r.reservation_note || "")}</td>
+    </tr>
+  `,
+    )
+    .join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BOM ${escapeHtml(bom.equipment)} • QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "bom")}
+<main class="container">
+  <h1>BOM equipment <span class="mono">${escapeHtml(bom.equipment)}</span></h1>
+  <p class="muted">Ultimo aggiornamento: ${escapeHtml(formatDateTimeCET(bom.updated_at))}</p>
+  <div class="row">
+    <a class="btn secondary" href="/bom">← Torna a BOM</a>
+    <a class="btn" href="/export/bom/${encodeURIComponent(bom.equipment)}.xlsx">Export BOM (XLSX)</a>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>SKU</th><th>Descrizione</th><th>Qty richiesta</th><th>Qty riservata</th><th>Stato stock</th><th>Note</th></tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="6" class="muted">Nessuna riga nel BOM.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</body>
+</html>`);
+});
 app.get("/labels", requireAuth, async (req, res) => {
   const items = await listItems();
   const baseUrl = getBaseUrl(req);
@@ -1048,7 +1250,17 @@ app.post("/api/move", requireAuth, async (req, res) => {
 // ---- Exports ----
 app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
   const rows = await getStockRows({ warehouse: null });
+  const reservations = await listStockReservations();
+  const reservedTotals = new Map();
+  const reservedBySku = new Map();
+  for (const r of reservations) {
+    const prev = reservedTotals.get(r.sku) || 0;
+    reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
 
+    const list = reservedBySku.get(r.sku) || [];
+    list.push(`${r.equipment}:${Number(r.qty_reserved || 0)}`);
+    reservedBySku.set(r.sku, list);
+  }
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Stock");
   ws.columns = [
@@ -1064,10 +1276,27 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     { header: "IN", key: "qty_in", width: 10 },
     { header: "OUT", key: "qty_out", width: 10 },
     { header: "OnHand", key: "qty_onhand", width: 10 },
+    { header: "Reserved", key: "qty_reserved", width: 12 },
+    { header: "Available", key: "qty_available", width: 12 },
+    {
+      header: "ReservedForEquipment",
+      key: "reserved_for_equipment",
+      width: 40,
+    },
   ];
-  ws.addRows(rows);
+  ws.addRows(
+    rows.map((r) => ({
+      ...r,
+      qty_reserved: reservedTotals.get(r.sku) || 0,
+      qty_available: Math.max(
+        0,
+        Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0),
+      ),
+      reserved_for_equipment: (reservedBySku.get(r.sku) || []).join(" • "),
+    })),
+  );
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:L1";
+  ws.autoFilter = "A1:O1";
 
   res.setHeader(
     "Content-Type",
@@ -1078,6 +1307,42 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
   res.end();
 });
 
+app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const bom = await getBomByEquipment(equipment);
+  if (!bom) return res.status(404).send("BOM non trovato");
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(`BOM-${bom.equipment}`.slice(0, 31));
+  ws.columns = [
+    { header: "Equipment", key: "equipment", width: 20 },
+    { header: "SKU", key: "sku", width: 18 },
+    { header: "Description", key: "description", width: 40 },
+    { header: "QtyRequired", key: "qty_required", width: 14 },
+    { header: "QtyReserved", key: "qty_reserved", width: 14 },
+    { header: "StockStatus", key: "availability", width: 14 },
+    { header: "ReservationNote", key: "reservation_note", width: 42 },
+  ];
+  ws.addRows(
+    bom.rows.map((r) => ({
+      equipment: bom.equipment,
+      ...r,
+    })),
+  );
+  ws.getRow(1).font = { bold: true };
+  ws.autoFilter = "A1:G1";
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="BOM-${bom.equipment}.xlsx"`,
+  );
+  await wb.xlsx.write(res);
+  res.end();
+});
 app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
   const rows = await listMovements(5000);
 
