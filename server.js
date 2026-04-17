@@ -218,13 +218,10 @@ app.get("/", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.lot)}</td>
-      <td>${r.entry_date ? escapeHtml(formatDate(r.entry_date)) : ""}</td>
       <td>${escapeHtml(r.uom || "")}</td>
       <td style="text-align:right">${r.initial_qty ?? 0}</td>
       <td>${escapeHtml(r.warehouse)}</td>
-      <td>${escapeHtml(r.location)}</td>
-      <td>${escapeHtml(r.bin)}</td>
-      <td style="text-align:right">${r.qty_in}</td>
+            <td style="text-align:right">${r.qty_in}</td>
       <td style="text-align:right">${r.qty_out}</td>
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
       <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
@@ -272,13 +269,13 @@ ${nav(req, "stock")}
       <table>
         <thead>
           <tr>
-            <th>SKU</th><th>Descrizione</th><th>Lot</th><th>Data ingresso</th><th>U.M.</th><th>Qty iniziale</th>
-            <th>Warehouse</th><th>Location</th><th>Bin</th>
+           <th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th>
+            <th>Warehouse</th>
            <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th>
           </tr>
         </thead>
         <tbody>
-         ${rows || `<tr><td colspan="15" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
+          ${rows || `<tr><td colspan="12" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1267,12 +1264,9 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     { header: "SKU", key: "sku", width: 18 },
     { header: "Description", key: "description", width: 42 },
     { header: "Lot", key: "lot", width: 18 },
-    { header: "EntryDate", key: "entry_date", width: 14 },
     { header: "UoM", key: "uom", width: 10 },
     { header: "InitialQty", key: "initial_qty", width: 12 },
     { header: "Warehouse", key: "warehouse", width: 14 },
-    { header: "Location", key: "location", width: 14 },
-    { header: "Bin", key: "bin", width: 14 },
     { header: "IN", key: "qty_in", width: 10 },
     { header: "OUT", key: "qty_out", width: 10 },
     { header: "OnHand", key: "qty_onhand", width: 10 },
@@ -1296,7 +1290,7 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     })),
   );
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:O1";
+  ws.autoFilter = "A1:L1";
 
   res.setHeader(
     "Content-Type",
