@@ -29,6 +29,7 @@ import {
   getOnhandForItemAt,
   listBomHeaders,
   getBomByEquipment,
+  deleteBomByEquipment,
   upsertBomFromRows,
   listStockReservations,
 } from "./db.js";
@@ -565,7 +566,14 @@ app.get("/bom", requireAuth, async (req, res) => {
       <td><a class="mono" href="/bom/${encodeURIComponent(h.equipment)}">${escapeHtml(h.equipment)}</a></td>
       <td style="text-align:right">${h.rows_count}</td>
       <td>${escapeHtml(formatDateTimeCET(h.updated_at))}</td>
-      <td><a class="btn secondary" href="/export/bom/${encodeURIComponent(h.equipment)}.xlsx">Export</a></td>
+     <td>
+        <div class="row">
+          <a class="btn secondary" href="/export/bom/${encodeURIComponent(h.equipment)}.xlsx">Export</a>
+          <form method="post" action="/bom/${encodeURIComponent(h.equipment)}/delete" onsubmit="return confirm('Eliminare il BOM di ${escapeHtml(h.equipment)} e ripristinare lo stock riservato?');">
+            <button class="btn danger" type="submit">Elimina</button>
+          </form>
+        </div>
+      </td>
     </tr>
   `,
     )
@@ -683,6 +691,17 @@ app.post(
     );
   },
 );
+
+app.post("/bom/:equipment/delete", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const deleted = await deleteBomByEquipment(equipment);
+  if (!deleted) {
+    return res.status(404).send("BOM non trovato");
+  }
+  return res.send(
+    `BOM eliminato per equipment ${escapeHtml(equipment)}. Le riserve stock sono state rimosse e la disponibilità precedente è stata ripristinata. <a href="/bom">Torna a BOM</a>`,
+  );
+});
 
 app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");

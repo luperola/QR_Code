@@ -408,6 +408,35 @@ export async function getBomByEquipment(equipment) {
   return { ...header, rows: rows.rows };
 }
 
+export async function deleteBomByEquipment(equipment) {
+  const eq = normalizeEquipment(equipment);
+  if (!eq) {
+    throw new Error("Equipment mancante");
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    await client.query(`DELETE FROM stock_reservations WHERE equipment=$1`, [
+      eq,
+    ]);
+
+    const deleted = await client.query(
+      `DELETE FROM bom_headers WHERE equipment=$1`,
+      [eq],
+    );
+
+    await client.query("COMMIT");
+    return deleted.rowCount > 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function upsertBomFromRows(equipment, rows) {
   const eq = normalizeEquipment(equipment);
   if (!eq) {
