@@ -54,8 +54,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_movements_item ON movements(item_id);
     CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
     CREATE INDEX IF NOT EXISTS idx_movements_wh ON movements(warehouse, location, bin);
-  
-CREATE TABLE IF NOT EXISTS bom_headers (
+
+    CREATE TABLE IF NOT EXISTS bom_headers (
       id BIGSERIAL PRIMARY KEY,
       equipment TEXT NOT NULL UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -87,9 +87,9 @@ CREATE TABLE IF NOT EXISTS bom_headers (
 
     CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
     CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
+  `);
 
-
-  const { rows } = await db.query(SELECT COUNT(*)::int AS n FROM users);
+  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
   if (rows[0].n === 0) {
     const hash = hashPin("1234");
     await db.query(
@@ -103,7 +103,9 @@ CREATE TABLE IF NOT EXISTS bom_headers (
 }
 
 function normalizeEquipment(equipment) {
-  return String(equipment || "").trim().toUpperCase();
+  return String(equipment || "")
+    .trim()
+    .toUpperCase();
 }
 
 export function hashPin(pin) {
@@ -150,8 +152,9 @@ export async function getUserById(id) {
 export async function getUserByPin(pin) {
   const { rows } = await db.query(`SELECT id, name, role, pin_hash FROM users`);
   for (const r of rows) {
-    if (verifyPin(pin, r.pin_hash))
+    if (verifyPin(pin, r.pin_hash)) {
       return { id: r.id, name: r.name, role: r.role };
+    }
   }
   return null;
 }
@@ -213,7 +216,7 @@ export async function getItemById(id) {
 
 export async function getItemBySkuLot(sku, lot) {
   const { rows } = await db.query(
-    SELECT * FROM items WHERE sku=$1 AND lot=$2,
+    `SELECT * FROM items WHERE sku=$1 AND lot=$2`,
     [sku, lot],
   );
   return rows[0] || null;
@@ -223,8 +226,8 @@ export async function deleteItemById(itemId) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query(DELETE FROM movements WHERE item_id=$1, [itemId]);
-    const result = await client.query(DELETE FROM items WHERE id=$1, [
+    await client.query(`DELETE FROM movements WHERE item_id=$1`, [itemId]);
+    const result = await client.query(`DELETE FROM items WHERE id=$1`, [
       itemId,
     ]);
     await client.query("COMMIT");
@@ -275,7 +278,7 @@ export async function addMovementChecked({
       );
       if (onhand < qty) {
         const err = new Error(
-          Stock insufficiente: on-hand=${onhand}, richiesto OUT=${qty},
+          `Stock insufficiente: on-hand=${onhand}, richiesto OUT=${qty}`,
         );
         err.code = "INSUFFICIENT_STOCK";
         throw err;
@@ -283,9 +286,10 @@ export async function addMovementChecked({
     }
 
     await client.query(
+      `
       INSERT INTO movements (item_id, type, qty, warehouse, location, bin, operator_user_id, note)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      ,
+      `,
       [
         item_id,
         type,
@@ -309,6 +313,7 @@ export async function addMovementChecked({
 
 export async function listMovements(limit = 200) {
   const { rows } = await db.query(
+    `
     SELECT m.ts, m.type, m.qty, m.warehouse, m.location, m.bin, m.note,
            i.sku, i.lot, i.description,
            u.name AS operator
@@ -415,7 +420,9 @@ export async function upsertBomFromRows(equipment, rows) {
       description: String(r.description || "").trim(),
       qty_required: Number(r.qty_required || 0),
     }))
-    .filter((r) => r.sku && Number.isFinite(r.qty_required) && r.qty_required > 0);
+    .filter(
+      (r) => r.sku && Number.isFinite(r.qty_required) && r.qty_required > 0,
+    );
 
   const aggregated = new Map();
   for (const r of compactRows) {
@@ -446,7 +453,9 @@ export async function upsertBomFromRows(equipment, rows) {
     );
     const bomId = created.rows[0].id;
 
-    await client.query(`DELETE FROM stock_reservations WHERE equipment=$1`, [eq]);
+    await client.query(`DELETE FROM stock_reservations WHERE equipment=$1`, [
+      eq,
+    ]);
     await client.query(`DELETE FROM bom_rows WHERE bom_id=$1`, [bomId]);
 
     const totals = await client.query(
@@ -527,7 +536,9 @@ export async function upsertBomFromRows(equipment, rows) {
       }
     }
 
-    await client.query(`UPDATE bom_headers SET updated_at=NOW() WHERE id=$1`, [bomId]);
+    await client.query(`UPDATE bom_headers SET updated_at=NOW() WHERE id=$1`, [
+      bomId,
+    ]);
     await client.query("COMMIT");
 
     return { equipment: eq, rows_count: bomRows.length };
