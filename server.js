@@ -707,9 +707,7 @@ app.post("/bom/:equipment/delete", requireAuth, async (req, res) => {
   if (!deleted) {
     return res.status(404).send("BOM non trovato");
   }
-  return res.send(
-    `BOM eliminato per equipment ${escapeHtml(equipment)}. Le riserve stock sono state rimosse e la disponibilità precedente è stata ripristinata. <a href="/bom">Torna a BOM</a>`,
-  );
+  return res.redirect("/bom");
 });
 
 app.get("/bom/:equipment", requireAuth, async (req, res) => {
