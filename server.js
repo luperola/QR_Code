@@ -637,69 +637,60 @@ ${nav(req, "bom")}
 </html>`);
 });
 
-app.post(
-  "/bom/import",
-  requireAuth,
-  upload.single("file"),
-  async (req, res) => {
-    if (!req.file) return res.status(400).send("No file uploaded");
-    const equipment = String(req.body?.equipment || "").trim();
-    if (!equipment) return res.status(400).send("Equipment mancante");
+const handleBomImport = async (req, res) => {
+  if (!req.file) return res.status(400).send("No file uploaded");
+  const equipment = String(req.body?.equipment || "").trim();
+  if (!equipment) return res.status(400).send("Equipment mancante");
 
-    const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const sourceRows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+  const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const sourceRows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
 
-    const norm = (s) =>
-      String(s || "")
-        .trim()
-        .toLowerCase();
+  const norm = (s) =>
+    String(s || "")
+      .trim()
+      .toLowerCase();
 
-    const parsedRows = [];
-    let skipped = 0;
-    for (const row of sourceRows) {
-      const keys = Object.keys(row);
-      const get = (...names) => {
-        const wanted = names.map((n) => norm(n));
-        for (const n of wanted) {
-          const exact = keys.find((k) => norm(k) === n);
-          if (exact) return row[exact];
-        }
-        for (const n of wanted) {
-          const partial = keys.find((k) => norm(k).includes(n));
-          if (partial) return row[partial];
-        }
-        return "";
-      };
-
-      const sku = String(get("SKU", "Sku")).trim();
-      const description = String(get("Description", "Descrizione")).trim();
-      const qtyRaw = get(
-        "Qty",
-        "Quantity",
-        "Quantita",
-        "Quantità",
-        "QTY",
-        "Qta",
-      );
-      const qtyRequired =
-        typeof qtyRaw === "number"
-          ? qtyRaw
-          : Number(String(qtyRaw || "").replace(",", "."));
-
-      if (!sku || !Number.isFinite(qtyRequired) || qtyRequired <= 0) {
-        skipped++;
-        continue;
+  const parsedRows = [];
+  let skipped = 0;
+  for (const row of sourceRows) {
+    const keys = Object.keys(row);
+    const get = (...names) => {
+      const wanted = names.map((n) => norm(n));
+      for (const n of wanted) {
+        const exact = keys.find((k) => norm(k) === n);
+        if (exact) return row[exact];
       }
-      parsedRows.push({ sku, description, qty_required: qtyRequired });
-    }
+      for (const n of wanted) {
+        const partial = keys.find((k) => norm(k).includes(n));
+        if (partial) return row[partial];
+      }
+      return "";
+    };
 
-    const result = await upsertBomFromRows(equipment, parsedRows);
-    res.send(
-      `Import BOM completato per equipment ${escapeHtml(result.equipment)}. Righe valide=${result.rows_count}, righe ignorate=${skipped}. <a href="/bom/${encodeURIComponent(result.equipment)}">Apri BOM</a>`,
-    );
-  },
-);
+    const sku = String(get("SKU", "Sku")).trim();
+    const description = String(get("Description", "Descrizione")).trim();
+    const qtyRaw = get("Qty", "Quantity", "Quantita", "Quantità", "QTY", "Qta");
+    const qtyRequired =
+      typeof qtyRaw === "number"
+        ? qtyRaw
+        : Number(String(qtyRaw || "").replace(",", "."));
+
+    if (!sku || !Number.isFinite(qtyRequired) || qtyRequired <= 0) {
+      skipped++;
+      continue;
+    }
+    parsedRows.push({ sku, description, qty_required: qtyRequired });
+  }
+
+  const result = await upsertBomFromRows(equipment, parsedRows);
+  return res.redirect(
+    `/bom/${encodeURIComponent(result.equipment)}?imported=${result.rows_count}&skipped=${skipped}`,
+  );
+};
+
+app.post("/bom", requireAuth, upload.single("file"), handleBomImport);
+app.post("/bom/import", requireAuth, upload.single("file"), handleBomImport);
 
 app.post("/bom/:equipment/delete", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
@@ -714,7 +705,12 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const bom = await getBomByEquipment(equipment);
   if (!bom) return res.status(404).send("BOM non trovato");
-
+  const imported = Number.parseInt(String(req.query.imported || ""), 10);
+  const skipped = Number.parseInt(String(req.query.skipped || ""), 10);
+  const importMessage =
+    Number.isInteger(imported) && Number.isInteger(skipped)
+      ? `<div class="flash ok">Import BOM completato. Righe valide=${imported}, righe ignorate=${skipped}.</div>`
+      : "";
   const rows = bom.rows
     .map(
       (r) => `
@@ -743,6 +739,7 @@ ${nav(req, "bom")}
 <main class="container">
   <h1>BOM equipment <span class="mono">${escapeHtml(bom.equipment)}</span></h1>
   <p class="muted">Ultimo aggiornamento: ${escapeHtml(formatDateTimeCET(bom.updated_at))}</p>
+   ${importMessage}
   <div class="row">
     <a class="btn secondary" href="/bom">← Torna a BOM</a>
     <a class="btn" href="/export/bom/${encodeURIComponent(bom.equipment)}.xlsx">Export BOM (XLSX)</a>
