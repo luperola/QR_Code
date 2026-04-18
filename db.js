@@ -556,11 +556,10 @@ export async function upsertBomFromRows(equipment, rows) {
       const uom = uomBySku.get(row.sku) || "PC";
       const qtyMissing = Math.max(0, row.qty_required - qtyReserved);
 
-      const buyNote =
-        qtyMissing > 0
-          ? `, da acquistare ${qtyMissing} ${uom} (${row.qty_required} - ${qtyReserved})`
-          : "";
-      const note = `${row.sku}: ${qtyReserved}${buyNote}`;
+      const note =
+        availability === "OK"
+          ? ""
+          : `${row.sku}: ${qtyReserved} ${uom}, da acquistare ${qtyMissing} ${uom}`;
       await client.query(
         `
         INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)

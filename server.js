@@ -204,7 +204,9 @@ app.get("/", requireAuth, async (req, res) => {
     const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
     const uom = String(r.uom || "").trim() || "PC";
     const buyLabel = qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
-    list.push(`${r.equipment}: ${Number(r.qty_reserved || 0)}${buyLabel}`);
+    list.push(
+      `${r.equipment}: ${Number(r.qty_reserved || 0)} ${uom}${buyLabel}`,
+    );
     reservedBySku.set(r.sku, list);
   }
 
@@ -1281,7 +1283,12 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
 
     const list = reservedBySku.get(r.sku) || [];
-    list.push(`${r.equipment}:${Number(r.qty_reserved || 0)}`);
+    const uom = String(r.uom || "").trim() || "PC";
+    const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
+    const buyLabel = qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
+    list.push(
+      `${r.equipment}: ${Number(r.qty_reserved || 0)} ${uom}${buyLabel}`,
+    );
     reservedBySku.set(r.sku, list);
   }
   const wb = new ExcelJS.Workbook();
