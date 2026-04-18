@@ -366,9 +366,18 @@ export async function getStockRows({ warehouse = null } = {}) {
 
 export async function listStockReservations() {
   const { rows } = await db.query(`
-    SELECT equipment, sku, qty_reserved
-    FROM stock_reservations
-    ORDER BY sku, equipment
+    SELECT
+      h.equipment,
+      r.sku,
+      r.qty_required,
+      r.qty_reserved,
+      GREATEST(r.qty_required - r.qty_reserved, 0) AS qty_to_buy,
+      COALESCE(NULLIF(MAX(TRIM(i.uom)), ''), 'PC') AS uom
+    FROM bom_rows r
+    JOIN bom_headers h ON h.id = r.bom_id
+    LEFT JOIN items i ON i.sku = r.sku
+    GROUP BY h.equipment, r.sku, r.qty_required, r.qty_reserved
+    ORDER BY r.sku, h.equipment
   `);
   return rows;
 }
@@ -547,11 +556,11 @@ export async function upsertBomFromRows(equipment, rows) {
       const uom = uomBySku.get(row.sku) || "PC";
       const qtyMissing = Math.max(0, row.qty_required - qtyReserved);
 
-      const note =
-        availability === "OK"
-          ? `${row.sku}: ${qtyReserved}, da acquistare ${qtyMissing} ${uom} (${row.qty_required} - ${qtyReserved})`
-          : `${row.sku}: da acquistare ${row.qty_required} ${uom}`;
-
+      const buyNote =
+        qtyMissing > 0
+          ? `, da acquistare ${qtyMissing} ${uom} (${row.qty_required} - ${qtyReserved})`
+          : "";
+      const note = `${row.sku}: ${qtyReserved}${buyNote}`;
       await client.query(
         `
         INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)
