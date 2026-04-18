@@ -601,7 +601,7 @@ ${nav(req, "bom")}
   <div class="card pad">
     <h2>Carica BOM Excel</h2>
     <p class="muted">Prima indica l'equipment (es. <span class="mono">DPROFAB4</span>), poi carica il file. Se l'equipment esiste già, il BOM verrà aggiornato.</p>
-    <form method="post" action="/bom/import" enctype="multipart/form-data">
+     <form method="post" action="/bom" enctype="multipart/form-data">
       <div class="form-grid">
         <label>Equipment
          <input name="equipment" required placeholder="es. DPROFAB4" list="equipment-list" />
