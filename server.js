@@ -604,7 +604,7 @@ ${nav(req, "bom")}
      <form method="post" action="/bom" enctype="multipart/form-data">
       <div class="form-grid">
         <label>Equipment
-         <input name="equipment" required placeholder="es. DPROFAB4" list="equipment-list" />
+         <input name="equipment" required placeholder="es. DPROFAB4" list="equipment-list" style="text-transform:uppercase" oninput="this.value = this.value.toUpperCase()" />
           <datalist id="equipment-list">
             ${equipmentOptions}
           </datalist>

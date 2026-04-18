@@ -517,6 +517,19 @@ export async function upsertBomFromRows(equipment, rows) {
       reservedTotals.rows.map((r) => [r.sku, Number(r.qty_reserved || 0)]),
     );
     const assignedNowBySku = new Map();
+    const uomRows = await client.query(
+      `
+      SELECT sku, COALESCE(NULLIF(MAX(TRIM(uom)), ''), 'PC') AS uom
+      FROM items
+      GROUP BY sku
+      `,
+    );
+    const uomBySku = new Map(
+      uomRows.rows.map((r) => [
+        String(r.sku || "").toUpperCase(),
+        r.uom || "PC",
+      ]),
+    );
 
     for (const row of bomRows) {
       const onhand = onhandBySku.get(row.sku) || 0;
@@ -531,12 +544,13 @@ export async function upsertBomFromRows(equipment, rows) {
       if (qtyReserved >= row.qty_required) availability = "OK";
       else if (qtyReserved > 0) availability = "PARTIAL";
 
+      const uom = uomBySku.get(row.sku) || "PC";
+      const qtyMissing = Math.max(0, row.qty_required - qtyReserved);
+
       const note =
         availability === "OK"
-          ? "Disponibile a stock"
-          : availability === "PARTIAL"
-            ? `Disponibile solo ${qtyReserved} su ${row.qty_required}`
-            : "Non disponibile a stock";
+          ? `${row.sku}: ${qtyReserved}, da acquistare ${qtyMissing} ${uom} (${row.qty_required} - ${qtyReserved})`
+          : `${row.sku}: da acquistare ${row.qty_required} ${uom}`;
 
       await client.query(
         `
