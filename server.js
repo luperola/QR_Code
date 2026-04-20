@@ -233,7 +233,8 @@ app.get("/", requireAuth, async (req, res) => {
       <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
       <td style="text-align:right">${Math.max(0, Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0))}</td>
       <td>${escapeHtml((reservedBySku.get(r.sku) || []).join(" • "))}</td>
-    </tr>
+    <td><a class="btn secondary" href="/q/${r.item_id}">IN / OUT</a></td>
+      </tr>
   `,
     )
     .join("");
@@ -277,11 +278,11 @@ ${nav(req, "stock")}
           <tr>
            <th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th>
             <th>Warehouse</th>
-           <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th>
+           <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th><th>Azione</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || `<tr><td colspan="12" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
+        ${rows || `<tr><td colspan="13" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1058,7 +1059,19 @@ ${nav(req, "movements")}
 <main class="container">
   <h1>Ultimi movimenti</h1>
   <div class="card pad">
-    <div class="row" style="margin-top:0">
+   <h2>Movimento da PC con codice</h2>
+    <p class="muted">Inserisci SKU e Lot (il codice stampato nel QR) per aprire la pagina IN/OUT senza usare la fotocamera.</p>
+    <form method="get" action="/scanlink">
+      <div class="form-grid">
+        <label>SKU<input name="sku" required placeholder="es. DKW-12345" /></label>
+        <label>Lot<input name="lot" required placeholder="es. LOT2026-01" /></label>
+      </div>
+      <div class="row">
+        <button class="btn ok" type="submit">Apri movimento IN / OUT</button>
+      </div>
+    </form>
+    <div class="hr"></div>
+  <div class="row" style="margin-top:0">
       <a class="btn" href="/export/movements.xlsx">Export Movimenti (XLSX)</a>
     </div>
   </div>
