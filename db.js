@@ -46,6 +46,7 @@ export async function initDb() {
       warehouse TEXT NOT NULL DEFAULT 'MAIN',
       location TEXT NOT NULL DEFAULT 'DEFAULT',
       bin TEXT NOT NULL DEFAULT 'DEFAULT',
+       equipment TEXT,
       operator_user_id BIGINT REFERENCES users(id),
       ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       note TEXT
@@ -87,7 +88,9 @@ export async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
     CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
-  `);
+   
+    ALTER TABLE movements ADD COLUMN IF NOT EXISTS equipment TEXT;  
+    `);
 
   const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
   if (rows[0].n === 0) {
@@ -264,6 +267,7 @@ export async function addMovementChecked({
   warehouse,
   location,
   bin,
+  equipment,
   operator_user_id,
   note,
 }) {
@@ -287,8 +291,8 @@ export async function addMovementChecked({
 
     await client.query(
       `
-      INSERT INTO movements (item_id, type, qty, warehouse, location, bin, operator_user_id, note)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     INSERT INTO movements (item_id, type, qty, warehouse, location, bin, equipment, operator_user_id, note)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       `,
       [
         item_id,
@@ -297,6 +301,7 @@ export async function addMovementChecked({
         warehouse,
         location,
         bin,
+        equipment || null,
         operator_user_id || null,
         note || null,
       ],
@@ -314,7 +319,7 @@ export async function addMovementChecked({
 export async function listMovements(limit = 200) {
   const { rows } = await db.query(
     `
-    SELECT m.ts, m.type, m.qty, m.warehouse, m.location, m.bin, m.note,
+    SELECT m.ts, m.type, m.qty, m.warehouse, m.location, m.bin, m.equipment, m.note,
            i.sku, i.lot, i.description,
            u.name AS operator
     FROM movements m
@@ -594,6 +599,48 @@ export async function upsertBomFromRows(equipment, rows) {
     await client.query("COMMIT");
 
     return { equipment: eq, rows_count: bomRows.length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function consumeBomReservation({ equipment, sku, qty }) {
+  const eq = normalizeEquipment(equipment);
+  const normalizedSku = String(sku || "").trim();
+  const q = Number(qty || 0);
+  if (!eq || !normalizedSku || !Number.isFinite(q) || q <= 0) return;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `
+      UPDATE stock_reservations
+      SET qty_reserved = GREATEST(qty_reserved - $3, 0),
+          updated_at = NOW()
+      WHERE equipment = $1 AND sku = $2
+      `,
+      [eq, normalizedSku, q],
+    );
+
+    await client.query(
+      `
+      UPDATE bom_rows r
+      SET qty_reserved = GREATEST(r.qty_reserved - $3, 0),
+          updated_at = NOW()
+      FROM bom_headers h
+      WHERE h.id = r.bom_id
+        AND h.equipment = $1
+        AND r.sku = $2
+      `,
+      [eq, normalizedSku, q],
+    );
+
+    await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

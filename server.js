@@ -32,6 +32,7 @@ import {
   deleteBomByEquipment,
   upsertBomFromRows,
   listStockReservations,
+  consumeBomReservation,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -189,9 +190,7 @@ app.get("/logout", (req, res) => {
 
 // ---- Pages ----
 app.get("/", requireAuth, async (req, res) => {
-  const wh = req.query.warehouse ? String(req.query.warehouse) : "";
-  const stock = await getStockRows({ warehouse: wh || null });
-  const whList = await listWarehouses();
+  const stock = await getStockRows({ warehouse: null });
   const reservations = await listStockReservations();
   const reservedTotals = new Map();
   const reservedBySku = new Map();
@@ -210,13 +209,6 @@ app.get("/", requireAuth, async (req, res) => {
     reservedBySku.set(r.sku, list);
   }
 
-  const whOptions = whList
-    .map(
-      (x) =>
-        `<option value="${escapeHtml(x)}" ${x === wh ? "selected" : ""}>${escapeHtml(x)}</option>`,
-    )
-    .join("");
-
   const rows = stock
     .map(
       (r) => `
@@ -226,8 +218,7 @@ app.get("/", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.lot)}</td>
       <td>${escapeHtml(r.uom || "")}</td>
       <td style="text-align:right">${r.initial_qty ?? 0}</td>
-      <td>${escapeHtml(r.warehouse)}</td>
-            <td style="text-align:right">${r.qty_in}</td>
+                 <td style="text-align:right">${r.qty_in}</td>
       <td style="text-align:right">${r.qty_out}</td>
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
       <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
@@ -256,17 +247,7 @@ ${nav(req, "stock")}
 
   <div class="card pad">
     <div class="row" style="margin-top:0">
-      <form method="get" action="/" class="row" style="margin-top:0">
-        <label class="muted">Warehouse
-          <select name="warehouse">
-            <option value="">Tutti</option>
-            ${whOptions}
-          </select>
-        </label>
-        <button class="btn secondary" type="submit">Filtra</button>
-      </form>
-
-      <a class="btn" href="/export/stock.xlsx">Export Stock (XLSX)</a>
+            <a class="btn" href="/export/stock.xlsx">Export Stock (XLSX)</a>
       <a class="btn secondary" href="/scan">Scanner (webcam)</a>
     </div>
   </div>
@@ -277,12 +258,11 @@ ${nav(req, "stock")}
         <thead>
           <tr>
            <th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th>
-            <th>Warehouse</th>
            <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th><th>Azione</th>
           </tr>
         </thead>
         <tbody>
-        ${rows || `<tr><td colspan="13" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
+      ${rows || `<tr><td colspan="12" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -565,6 +545,7 @@ app.post(
 
 app.get("/bom", requireAuth, async (req, res) => {
   const headers = await listBomHeaders();
+  const activeHeaders = headers.filter((h) => Number(h.rows_count || 0) > 0);
   const equipmentOptions = headers
     .map(
       (h) =>
@@ -605,6 +586,20 @@ ${nav(req, "bom")}
 <main class="container">
   <h1>BOM per equipment</h1>
   <div class="card pad">
+    <h2>BOM attivi</h2>
+    <label>Seleziona BOM equipment
+      <select id="activeBomSelect">
+        <option value="">-- Apri BOM --</option>
+        ${activeHeaders
+          .map(
+            (h) =>
+              `<option value="${escapeHtml(h.equipment)}">${escapeHtml(h.equipment)}</option>`,
+          )
+          .join("")}
+      </select>
+    </label>
+  </div>
+  <div class="card pad">
     <h2>Carica BOM Excel</h2>
     <p class="muted">Prima indica l'equipment (es. <span class="mono">DPROFAB4</span>), poi carica il file. Se l'equipment esiste già, il BOM verrà aggiornato.</p>
      <form method="post" action="/bom" enctype="multipart/form-data">
@@ -639,6 +634,12 @@ ${nav(req, "bom")}
     </div>
   </div>
 </main>
+<script>
+document.getElementById("activeBomSelect")?.addEventListener("change", function(){
+  if (!this.value) return;
+  window.location.href = "/bom/" + encodeURIComponent(this.value);
+});
+</script>
 </body>
 </html>`);
 });
@@ -842,6 +843,15 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   if (!item) {
     return res.status(404).send("Item not found.");
   }
+  const activeBoms = (await listBomHeaders())
+    .filter((h) => Number(h.rows_count || 0) > 0)
+    .map((h) => h.equipment);
+  const bomOptions = activeBoms
+    .map(
+      (equipment) =>
+        `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment)}</option>`,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -865,13 +875,13 @@ app.get("/q/:id", requireAuth, async (req, res) => {
 
       <div class="form-grid">
         <label>Warehouse
-          <input name="warehouse" placeholder="MAIN" />
+         <input name="warehouse" placeholder="MAIN" value="MAIN" />
         </label>
-        <label>Location
-          <input name="location" placeholder="DEFAULT" />
-        </label>
-        <label>Bin
-          <input name="bin" placeholder="DEFAULT" />
+        <label>Equipment (BOM attivo)
+          <select name="equipment">
+            <option value="">-- Seleziona equipment (solo OUT) --</option>
+            ${bomOptions}
+          </select>
         </label>
         <label>Quantità
           <input name="qty" type="number" min="0.01" step="0.01" value="1" required />
@@ -891,7 +901,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     </form>
 
     <div class="hr"></div>
-    <p class="muted">Tip: salva questa pagina in Home. Warehouse/Location/Bin vengono ricordati sul telefono.</p>
+    <p class="muted">Tip: salva questa pagina in Home. Warehouse ed equipment vengono ricordati sul telefono.</p>
   </div>
 </main>
 
@@ -900,14 +910,12 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   const f = document.getElementById('moveForm');
   const get = (k) => localStorage.getItem('qrstock_' + k) || '';
   f.warehouse.value = get('warehouse') || 'MAIN';
-  f.location.value = get('location') || 'DEFAULT';
-  f.bin.value = get('bin') || 'DEFAULT';
+   f.equipment.value = get('equipment') || '';
 })();
 
 function saveLoc(payload){
   localStorage.setItem('qrstock_warehouse', payload.warehouse);
-  localStorage.setItem('qrstock_location', payload.location);
-  localStorage.setItem('qrstock_bin', payload.bin);
+  localStorage.setItem('qrstock_equipment', payload.equipment);
 }
 
 function showMsg(text, ok){
@@ -927,10 +935,16 @@ async function sendMove(type) {
     qty: Number(data.get('qty') || 1),
     type,
     warehouse: String(data.get('warehouse') || 'MAIN').trim() || 'MAIN',
-    location: String(data.get('location') || 'DEFAULT').trim() || 'DEFAULT',
-    bin: String(data.get('bin') || 'DEFAULT').trim() || 'DEFAULT',
+    location: 'DEFAULT',
+    bin: 'DEFAULT',
+    equipment: String(data.get('equipment') || '').trim().toUpperCase(),
     note: String(data.get('note') || '').trim()
   };
+
+  if (type === 'OUT' && !payload.equipment) {
+    showMsg("Per OUT seleziona un equipment (BOM attivo).", false);
+    return;
+  }
 
   saveLoc(payload);
   showMsg("Invio...", true);
@@ -947,7 +961,8 @@ async function sendMove(type) {
     return;
   }
 
-  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "/" + payload.location + "/" + payload.bin + "): " + out.onhand, true);
+  const eqLabel = payload.equipment ? " | Equipment: " + payload.equipment : "";
+  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "): " + out.onhand + eqLabel, true);
 }
 </script>
 </body>
@@ -1033,8 +1048,7 @@ app.get("/movements", requireAuth, async (req, res) => {
       <td>${escapeHtml(m.type)}</td>
       <td style="text-align:right">${m.qty}</td>
       <td>${escapeHtml(m.warehouse)}</td>
-      <td>${escapeHtml(m.location)}</td>
-      <td>${escapeHtml(m.bin)}</td>
+     <td>${escapeHtml(m.equipment || "")}</td>
       <td>${escapeHtml(m.sku)}</td>
       <td>${escapeHtml(m.lot)}</td>
       <td>${escapeHtml(m.description)}</td>
@@ -1080,11 +1094,11 @@ ${nav(req, "movements")}
       <table>
         <thead><tr>
           <th>Data/ora</th><th>Tipo</th><th>Qty</th>
-          <th>Warehouse</th><th>Location</th><th>Bin</th>
+         <th>Warehouse</th><th>Equipment</th>
           <th>SKU</th><th>Lot</th><th>Descrizione</th><th>Operatore</th><th>Note</th>
         </tr></thead>
         <tbody>
-          ${rows || `<tr><td colspan="11" class="muted">Nessun movimento.</td></tr>`}
+          ${rows || `<tr><td colspan="10" class="muted">Nessun movimento.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1224,7 +1238,7 @@ app.get("/api/bins", requireAuth, async (req, res) => {
 });
 
 app.post("/api/move", requireAuth, async (req, res) => {
-  const { sku, lot, type, qty, warehouse, location, bin, note } =
+  const { sku, lot, type, qty, warehouse, location, bin, equipment, note } =
     req.body || {};
 
   if (!sku || !lot || !type) {
@@ -1248,6 +1262,20 @@ app.post("/api/move", requireAuth, async (req, res) => {
   const wh = String(warehouse || "MAIN").trim() || "MAIN";
   const loc = String(location || "DEFAULT").trim() || "DEFAULT";
   const b = String(bin || "DEFAULT").trim() || "DEFAULT";
+  const eq = String(equipment || "")
+    .trim()
+    .toUpperCase();
+
+  if (type === "OUT" && !eq) {
+    return res
+      .status(400)
+      .json({ error: "Per OUT è obbligatorio selezionare un equipment BOM" });
+  }
+  if (eq) {
+    const bom = await getBomByEquipment(eq);
+    if (!bom)
+      return res.status(400).json({ error: "BOM equipment non valido" });
+  }
 
   try {
     await addMovementChecked({
@@ -1257,9 +1285,13 @@ app.post("/api/move", requireAuth, async (req, res) => {
       warehouse: wh,
       location: loc,
       bin: b,
+      equipment: eq,
       operator_user_id: req.user.id,
       note: note ? String(note).trim() : null,
     });
+    if (type === "OUT" && eq) {
+      await consumeBomReservation({ equipment: eq, sku: item.sku, qty: q });
+    }
   } catch (e) {
     if (e?.code === "INSUFFICIENT_STOCK") {
       const onhand = await getOnhandForItemAt({
@@ -1393,8 +1425,7 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
     { header: "Type", key: "type", width: 8 },
     { header: "Qty", key: "qty", width: 8 },
     { header: "Warehouse", key: "warehouse", width: 14 },
-    { header: "Location", key: "location", width: 14 },
-    { header: "Bin", key: "bin", width: 14 },
+    { header: "Equipment", key: "equipment", width: 18 },
     { header: "SKU", key: "sku", width: 18 },
     { header: "Lot", key: "lot", width: 18 },
     { header: "Description", key: "description", width: 42 },
@@ -1403,7 +1434,7 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
   ];
   ws.addRows(rows);
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:K1";
+  ws.autoFilter = "A1:J1";
 
   res.setHeader(
     "Content-Type",
