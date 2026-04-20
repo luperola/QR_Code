@@ -452,6 +452,25 @@ export async function deleteBomByEquipment(equipment) {
   }
 }
 
+export async function ensureBomHeader(equipment) {
+  const eq = normalizeEquipment(equipment);
+  if (!eq) {
+    throw new Error("Equipment mancante");
+  }
+
+  const { rows } = await db.query(
+    `
+    INSERT INTO bom_headers (equipment)
+    VALUES ($1)
+    ON CONFLICT (equipment) DO UPDATE SET updated_at=NOW()
+    RETURNING id, equipment, created_at, updated_at
+    `,
+    [eq],
+  );
+
+  return rows[0];
+}
+
 export async function upsertBomFromRows(equipment, rows) {
   const eq = normalizeEquipment(equipment);
   if (!eq) {

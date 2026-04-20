@@ -31,6 +31,7 @@ import {
   getBomByEquipment,
   deleteBomByEquipment,
   upsertBomFromRows,
+  ensureBomHeader,
   listStockReservations,
   consumeBomReservation,
 } from "./db.js";
@@ -843,16 +844,55 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   if (!item) {
     return res.status(404).send("Item not found.");
   }
-  const activeBoms = (await listBomHeaders())
-    .filter((h) => Number(h.rows_count || 0) > 0)
-    .map((h) => h.equipment);
-  const bomOptions = activeBoms
-    .map(
-      (equipment) =>
-        `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment)}</option>`,
-    )
-    .join("");
+  const bomHeaders = await listBomHeaders();
+  const reservations = await listStockReservations();
+  const reservationsForSku = reservations
+    .filter((r) => String(r.sku || "").trim() === String(item.sku || "").trim())
+    .sort((a, b) =>
+      String(a.equipment || "").localeCompare(String(b.equipment || "")),
+    );
 
+  const reservationByEquipment = new Map(
+    reservationsForSku.map((r) => [
+      String(r.equipment || "")
+        .trim()
+        .toUpperCase(),
+      {
+        qty_reserved: Number(r.qty_reserved || 0),
+        qty_to_buy: Math.max(0, Number(r.qty_to_buy || 0)),
+        uom: String(r.uom || "").trim() || "PC",
+      },
+    ]),
+  );
+
+  const bomOptions = bomHeaders
+    .map((h) => {
+      const equipment = String(h.equipment || "")
+        .trim()
+        .toUpperCase();
+      const reservation = reservationByEquipment.get(equipment);
+      const reservedLabel = reservation
+        ? ` • riservato ${reservation.qty_reserved} ${reservation.uom}${
+            reservation.qty_to_buy > 0
+              ? `, da acquistare ${reservation.qty_to_buy} ${reservation.uom}`
+              : ""
+          }`
+        : "";
+      return `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment + reservedLabel)}</option>`;
+    })
+    .join("");
+  const reservationSummary = reservationsForSku.length
+    ? reservationsForSku
+        .map((r) => {
+          const uom = String(r.uom || "").trim() || "PC";
+          const qtyReserved = Number(r.qty_reserved || 0);
+          const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
+          const buyLabel =
+            qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
+          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyReserved} ${escapeHtml(uom)}${escapeHtml(buyLabel)}</li>`;
+        })
+        .join("")
+    : `<li class="muted">Nessuna riserva BOM per SKU <span class="mono">${escapeHtml(item.sku)}</span>.</li>`;
   res.send(`<!doctype html>
 <html lang="it">
 <head>
@@ -877,11 +917,14 @@ app.get("/q/:id", requireAuth, async (req, res) => {
         <label>Warehouse
          <input name="warehouse" placeholder="MAIN" value="MAIN" />
         </label>
-        <label>Equipment (BOM attivo)
+        <label>Equipment (BOM)
           <select name="equipment">
-            <option value="">-- Seleziona equipment (solo OUT) --</option>
+            <option value="">-- Seleziona equipment esistente --</option>
             ${bomOptions}
           </select>
+        </label>
+        <label>Nuovo equipment/BOM
+          <input name="new_equipment" placeholder="Es. LINEA-02" />
         </label>
         <label>Quantità
           <input name="qty" type="number" min="0.01" step="0.01" value="1" required />
@@ -890,7 +933,10 @@ app.get("/q/:id", requireAuth, async (req, res) => {
           <input name="note" placeholder="es. carico da fornitore / scarico produzione..." />
         </label>
       </div>
-
+ <div class="card pad" style="margin-top:8px;">
+        <p class="muted" style="margin:0 0 6px 0;">Riservato per SKU <span class="mono">${escapeHtml(item.sku)}</span> (per scegliere meglio il BOM):</p>
+        <ul style="margin:0; padding-left:18px;">${reservationSummary}</ul>
+      </div>
       <div class="row">
         <button class="btn ok" type="button" onclick="sendMove('IN')">IN</button>
         <button class="btn danger" type="button" onclick="sendMove('OUT')">OUT</button>
@@ -902,7 +948,8 @@ app.get("/q/:id", requireAuth, async (req, res) => {
 
     <div class="hr"></div>
     <p class="muted">Tip: salva questa pagina in Home. Warehouse ed equipment vengono ricordati sul telefono.</p>
-  </div>
+  <p class="muted">Se inserisci un nuovo equipment/BOM, verrà creato automaticamente anche nella pagina <span class="mono">/bom</span>.</p>
+    </div>
 </main>
 
 <script>
@@ -910,7 +957,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   const f = document.getElementById('moveForm');
   const get = (k) => localStorage.getItem('qrstock_' + k) || '';
   f.warehouse.value = get('warehouse') || 'MAIN';
-   f.equipment.value = get('equipment') || '';
+    f.equipment.value = get('equipment') || '';
 })();
 
 function saveLoc(payload){
@@ -928,7 +975,9 @@ function showMsg(text, ok){
 async function sendMove(type) {
   const form = document.getElementById('moveForm');
   const data = new FormData(form);
-
+const selectedEquipment = String(data.get('equipment') || '').trim().toUpperCase();
+  const newEquipment = String(data.get('new_equipment') || '').trim().toUpperCase();
+  const finalEquipment = newEquipment || selectedEquipment;
   const payload = {
     sku: data.get('sku'),
     lot: data.get('lot'),
@@ -937,12 +986,12 @@ async function sendMove(type) {
     warehouse: String(data.get('warehouse') || 'MAIN').trim() || 'MAIN',
     location: 'DEFAULT',
     bin: 'DEFAULT',
-    equipment: String(data.get('equipment') || '').trim().toUpperCase(),
+    equipment: finalEquipment,
     note: String(data.get('note') || '').trim()
   };
 
   if (type === 'OUT' && !payload.equipment) {
-    showMsg("Per OUT seleziona un equipment (BOM attivo).", false);
+   showMsg("Per OUT seleziona un equipment o inserisci un nuovo nome BOM.", false);
     return;
   }
 
@@ -962,7 +1011,9 @@ async function sendMove(type) {
   }
 
   const eqLabel = payload.equipment ? " | Equipment: " + payload.equipment : "";
-  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "): " + out.onhand + eqLabel, true);
+ const createdLabel = out.bom_created ? " | Nuovo BOM registrato" : "";
+  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "): " + out.onhand + eqLabel + createdLabel, true);
+  form.new_equipment.value = '';
 }
 </script>
 </body>
@@ -1271,10 +1322,13 @@ app.post("/api/move", requireAuth, async (req, res) => {
       .status(400)
       .json({ error: "Per OUT è obbligatorio selezionare un equipment BOM" });
   }
+  let createdBom = false;
   if (eq) {
     const bom = await getBomByEquipment(eq);
-    if (!bom)
-      return res.status(400).json({ error: "BOM equipment non valido" });
+    if (!bom) {
+      await ensureBomHeader(eq);
+      createdBom = true;
+    }
   }
 
   try {
@@ -1314,7 +1368,11 @@ app.post("/api/move", requireAuth, async (req, res) => {
       r.bin === b,
   );
 
-  res.json({ ok: true, onhand: row ? row.qty_onhand : null });
+  res.json({
+    ok: true,
+    onhand: row ? row.qty_onhand : null,
+    bom_created: createdBom,
+  });
 });
 
 // ---- Exports ----
