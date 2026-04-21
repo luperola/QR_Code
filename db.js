@@ -249,7 +249,8 @@ export async function getOnhandForItemAt(
 ) {
   const { rows } = await client.query(
     `
-   (
+    SELECT
+    (
         CASE
           WHEN $2 = 'MAIN' AND $3 = 'DEFAULT' AND $4 = 'DEFAULT'
             THEN COALESCE(i.initial_qty, 0)
