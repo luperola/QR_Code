@@ -249,11 +249,22 @@ export async function getOnhandForItemAt(
 ) {
   const { rows } = await client.query(
     `
-    SELECT
-      COALESCE(SUM(CASE WHEN type='IN' THEN qty END),0) -
-      COALESCE(SUM(CASE WHEN type='OUT' THEN qty END),0) AS onhand
-    FROM movements
-    WHERE item_id=$1 AND warehouse=$2 AND location=$3 AND bin=$4
+   (
+        CASE
+          WHEN $2 = 'MAIN' AND $3 = 'DEFAULT' AND $4 = 'DEFAULT'
+            THEN COALESCE(i.initial_qty, 0)
+          ELSE 0
+        END
+      )
+      + COALESCE(SUM(CASE WHEN m.type='IN' THEN m.qty END),0)
+      - COALESCE(SUM(CASE WHEN m.type='OUT' THEN m.qty END),0) AS onhand
+    FROM items i
+    LEFT JOIN movements m
+      ON m.item_id = i.id
+     AND m.warehouse = $2
+     AND m.location = $3
+     AND m.bin = $4
+    WHERE i.id=$1
   `,
     [item_id, warehouse, location, bin],
   );
