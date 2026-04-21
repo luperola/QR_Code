@@ -104,6 +104,48 @@ function escapeHtml(s = "") {
     .replaceAll("'", "&#039;");
 }
 
+function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
+  const bySku = new Map();
+  const onhandBySku = new Map();
+
+  for (const row of stockRows) {
+    const sku = String(row.sku || "").trim();
+    if (!sku) continue;
+    const prev = onhandBySku.get(sku) || 0;
+    onhandBySku.set(sku, prev + Number(row.qty_onhand || 0));
+  }
+
+  for (const r of reservations) {
+    const sku = String(r.sku || "").trim();
+    if (!sku) continue;
+    const current = bySku.get(sku) || {
+      qtyRequiredTotal: 0,
+      qtyReservedTotal: 0,
+      uom: String(r.uom || "").trim() || "PC",
+      equipmentRows: [],
+    };
+    current.qtyRequiredTotal += Number(r.qty_required || 0);
+    current.qtyReservedTotal += Number(r.qty_reserved || 0);
+    current.equipmentRows.push({
+      equipment: String(r.equipment || "").trim(),
+      qtyRequired: Number(r.qty_required || 0),
+      uom: String(r.uom || "").trim() || current.uom,
+    });
+    bySku.set(sku, current);
+  }
+
+  for (const [sku, entry] of bySku.entries()) {
+    const onhand = onhandBySku.get(sku) || 0;
+    entry.qtyToBuyTotal = Math.max(0, entry.qtyRequiredTotal - onhand);
+    entry.warning =
+      entry.qtyToBuyTotal > 0
+        ? `ATTENZIONE: ACQUISTARE ${entry.qtyToBuyTotal} ${entry.uom}`
+        : "";
+  }
+
+  return bySku;
+}
+
 async function requireAuth(req, res, next) {
   if (!req.session?.user_id) {
     return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
@@ -188,26 +230,19 @@ app.get("/logout", (req, res) => {
   req.session = null;
   res.redirect("/login");
 });
-
 // ---- Pages ----
 app.get("/", requireAuth, async (req, res) => {
   const stock = await getStockRows({ warehouse: null });
   const reservations = await listStockReservations();
   const reservedTotals = new Map();
-  const reservedBySku = new Map();
+  const reservationBySku = buildReservationViewBySku({
+    reservations,
+    stockRows: stock,
+  });
 
   for (const r of reservations) {
     const prev = reservedTotals.get(r.sku) || 0;
     reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
-
-    const list = reservedBySku.get(r.sku) || [];
-    const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
-    const uom = String(r.uom || "").trim() || "PC";
-    const buyLabel = qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
-    list.push(
-      `${r.equipment}: ${Number(r.qty_reserved || 0)} ${uom}${buyLabel}`,
-    );
-    reservedBySku.set(r.sku, list);
   }
 
   const rows = stock
@@ -224,7 +259,18 @@ app.get("/", requireAuth, async (req, res) => {
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
       <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
       <td style="text-align:right">${Math.max(0, Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0))}</td>
-      <td>${escapeHtml((reservedBySku.get(r.sku) || []).join(" • "))}</td>
+     <td>${escapeHtml(
+       (reservationBySku.get(r.sku)?.equipmentRows || [])
+         .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
+         .concat(
+           reservationBySku.get(r.sku)?.warning
+             ? [reservationBySku.get(r.sku).warning]
+             : [],
+         )
+         .join(" • "),
+     )}</td>
+
+
     <td><a class="btn secondary" href="/q/${r.item_id}">IN / OUT</a></td>
       </tr>
   `,
@@ -846,6 +892,10 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   }
   const bomHeaders = await listBomHeaders();
   const reservations = await listStockReservations();
+  const reservationBySku = buildReservationViewBySku({
+    reservations,
+    stockRows: await getStockRows({ warehouse: null }),
+  });
   const reservationsForSku = reservations
     .filter((r) => String(r.sku || "").trim() === String(item.sku || "").trim())
     .sort((a, b) =>
@@ -858,8 +908,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
         .trim()
         .toUpperCase(),
       {
-        qty_reserved: Number(r.qty_reserved || 0),
-        qty_to_buy: Math.max(0, Number(r.qty_to_buy || 0)),
+        qty_required: Number(r.qty_required || 0),
         uom: String(r.uom || "").trim() || "PC",
       },
     ]),
@@ -872,11 +921,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
         .toUpperCase();
       const reservation = reservationByEquipment.get(equipment);
       const reservedLabel = reservation
-        ? ` • riservato ${reservation.qty_reserved} ${reservation.uom}${
-            reservation.qty_to_buy > 0
-              ? `, da acquistare ${reservation.qty_to_buy} ${reservation.uom}`
-              : ""
-          }`
+        ? ` • richiesti ${reservation.qty_required} ${reservation.uom}`
         : "";
       return `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment + reservedLabel)}</option>`;
     })
@@ -885,12 +930,16 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     ? reservationsForSku
         .map((r) => {
           const uom = String(r.uom || "").trim() || "PC";
-          const qtyReserved = Number(r.qty_reserved || 0);
-          const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
-          const buyLabel =
-            qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
-          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyReserved} ${escapeHtml(uom)}${escapeHtml(buyLabel)}</li>`;
+          const qtyRequired = Number(r.qty_required || 0);
+          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyRequired} ${escapeHtml(uom)}</li>`;
         })
+        .concat(
+          reservationBySku.get(item.sku)?.warning
+            ? [
+                `<li><b>${escapeHtml(reservationBySku.get(item.sku).warning)}</b></li>`,
+              ]
+            : [],
+        )
         .join("")
     : `<li class="muted">Nessuna riserva BOM per SKU <span class="mono">${escapeHtml(item.sku)}</span>.</li>`;
   res.send(`<!doctype html>
@@ -1380,19 +1429,13 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
   const rows = await getStockRows({ warehouse: null });
   const reservations = await listStockReservations();
   const reservedTotals = new Map();
-  const reservedBySku = new Map();
+  const reservationBySku = buildReservationViewBySku({
+    reservations,
+    stockRows: rows,
+  });
   for (const r of reservations) {
     const prev = reservedTotals.get(r.sku) || 0;
     reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
-
-    const list = reservedBySku.get(r.sku) || [];
-    const uom = String(r.uom || "").trim() || "PC";
-    const qtyToBuy = Math.max(0, Number(r.qty_to_buy || 0));
-    const buyLabel = qtyToBuy > 0 ? `, da acquistare ${qtyToBuy} ${uom}` : "";
-    list.push(
-      `${r.equipment}: ${Number(r.qty_reserved || 0)} ${uom}${buyLabel}`,
-    );
-    reservedBySku.set(r.sku, list);
   }
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Stock");
@@ -1422,7 +1465,14 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
         0,
         Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0),
       ),
-      reserved_for_equipment: (reservedBySku.get(r.sku) || []).join(" • "),
+      reserved_for_equipment: (reservationBySku.get(r.sku)?.equipmentRows || [])
+        .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
+        .concat(
+          reservationBySku.get(r.sku)?.warning
+            ? [reservationBySku.get(r.sku).warning]
+            : [],
+        )
+        .join(" • "),
     })),
   );
   ws.getRow(1).font = { bold: true };
