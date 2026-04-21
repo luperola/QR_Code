@@ -257,11 +257,11 @@ export async function getOnhandForItemAt(
     `
     SELECT
     (
-        CASE
+        MAX(CASE
           WHEN $2 = 'MAIN' AND $3 = 'DEFAULT' AND $4 = 'DEFAULT'
             THEN COALESCE(i.initial_qty, 0)
           ELSE 0
-        END
+        END)
       )
       + COALESCE(SUM(CASE WHEN m.type='IN' THEN m.qty END),0)
       - COALESCE(SUM(CASE WHEN m.type='OUT' THEN m.qty END),0) AS onhand
