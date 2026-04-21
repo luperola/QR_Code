@@ -128,7 +128,7 @@ function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
     current.qtyReservedTotal += Number(r.qty_reserved || 0);
     current.equipmentRows.push({
       equipment: String(r.equipment || "").trim(),
-      qtyReserved: Number(r.qty_reserved || 0),
+      qtyRequired: Number(r.qty_required || 0),
       uom: String(r.uom || "").trim() || current.uom,
     });
     bySku.set(sku, current);
@@ -253,7 +253,7 @@ app.get("/", requireAuth, async (req, res) => {
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
            <td>${escapeHtml(
              (reservationBySku.get(r.sku)?.equipmentRows || [])
-               .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
+               .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
                .concat(
                  reservationBySku.get(r.sku)?.warning
                    ? [reservationBySku.get(r.sku).warning]
