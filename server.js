@@ -716,7 +716,29 @@ const handleBomImport = async (req, res) => {
 
     const sku = String(get("SKU", "Sku")).trim();
     const description = String(get("Description", "Descrizione")).trim();
-    const qtyRaw = get("Qty", "Quantity", "Quantita", "Quantità", "QTY", "Qta");
+    const qtyKeys = keys.filter((k) => {
+      const nk = norm(k);
+      return (
+        (nk.includes("qty") ||
+          nk.includes("quantita") ||
+          nk.includes("quantità") ||
+          nk.includes("qta")) &&
+        !nk.includes("riserv") &&
+        !nk.includes("reserved")
+      );
+    });
+    const preferredQtyKey =
+      qtyKeys.find((k) => {
+        const nk = norm(k);
+        return (
+          nk === "qty" ||
+          nk === "quantity" ||
+          nk === "quantita" ||
+          nk === "quantità" ||
+          nk === "qta"
+        );
+      }) || qtyKeys[0];
+    const qtyRaw = preferredQtyKey ? row[preferredQtyKey] : "";
     const qtyRequired =
       typeof qtyRaw === "number"
         ? qtyRaw
@@ -764,8 +786,7 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description || "")}</td>
       <td style="text-align:right">${r.qty_required}</td>
-      <td style="text-align:right">${r.qty_reserved}</td>
-      <td>${escapeHtml(r.availability)}</td>
+            <td>${escapeHtml(r.availability)}</td>
       <td>${escapeHtml(r.reservation_note || "")}</td>
     </tr>
   `,
@@ -795,10 +816,10 @@ ${nav(req, "bom")}
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>SKU</th><th>Descrizione</th><th>Qty richiesta</th><th>Qty riservata</th><th>Stato stock</th><th>Note</th></tr>
+           <tr><th>SKU</th><th>Descrizione</th><th>Qty richiesta</th><th>Stato stock</th><th>Note</th></tr>
         </thead>
         <tbody>
-          ${rows || `<tr><td colspan="6" class="muted">Nessuna riga nel BOM.</td></tr>`}
+          ${rows || `<tr><td colspan="5" class="muted">Nessuna riga nel BOM.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1486,7 +1507,6 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
     { header: "SKU", key: "sku", width: 18 },
     { header: "Description", key: "description", width: 40 },
     { header: "QtyRequired", key: "qty_required", width: 14 },
-    { header: "QtyReserved", key: "qty_reserved", width: 14 },
     { header: "StockStatus", key: "availability", width: 14 },
     { header: "ReservationNote", key: "reservation_note", width: 42 },
   ];
@@ -1497,7 +1517,7 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
     })),
   );
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:G1";
+  ws.autoFilter = "A1:F1";
 
   res.setHeader(
     "Content-Type",
