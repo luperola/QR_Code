@@ -602,7 +602,7 @@ export async function upsertBomFromRows(equipment, rows) {
       const note =
         availability === "OK"
           ? ""
-          : `${row.sku}: ${qtyReserved} ${uom}, da acquistare ${qtyMissing} ${uom}`;
+          : `${row.sku}: ${row.qty_required} ${uom}, da acquistare ${qtyMissing} ${uom}`;
       await client.query(
         `
         INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)
