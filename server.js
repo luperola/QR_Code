@@ -139,7 +139,7 @@ function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
     entry.qtyToBuyTotal = Math.max(0, entry.qtyRequiredTotal - onhand);
     entry.warning =
       entry.qtyToBuyTotal > 0
-        ? `ATTENZIONE: ACQUISTARE ${entry.qtyToBuyTotal} ${entry.uom}`
+        ? `ATTENZIONE - DA ACQUISTARE ${entry.qtyToBuyTotal} mt`
         : "";
   }
 
@@ -234,16 +234,10 @@ app.get("/logout", (req, res) => {
 app.get("/", requireAuth, async (req, res) => {
   const stock = await getStockRows({ warehouse: null });
   const reservations = await listStockReservations();
-  const reservedTotals = new Map();
   const reservationBySku = buildReservationViewBySku({
     reservations,
     stockRows: stock,
   });
-
-  for (const r of reservations) {
-    const prev = reservedTotals.get(r.sku) || 0;
-    reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
-  }
 
   const rows = stock
     .map(
@@ -257,18 +251,16 @@ app.get("/", requireAuth, async (req, res) => {
                  <td style="text-align:right">${r.qty_in}</td>
       <td style="text-align:right">${r.qty_out}</td>
       <td style="text-align:right"><b>${r.qty_onhand}</b></td>
-      <td style="text-align:right">${reservedTotals.get(r.sku) || 0}</td>
-      <td style="text-align:right">${Math.max(0, Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0))}</td>
-     <td>${escapeHtml(
-       (reservationBySku.get(r.sku)?.equipmentRows || [])
-         .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
-         .concat(
-           reservationBySku.get(r.sku)?.warning
-             ? [reservationBySku.get(r.sku).warning]
-             : [],
-         )
-         .join(" • "),
-     )}</td>
+           <td>${escapeHtml(
+             (reservationBySku.get(r.sku)?.equipmentRows || [])
+               .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
+               .concat(
+                 reservationBySku.get(r.sku)?.warning
+                   ? [reservationBySku.get(r.sku).warning]
+                   : [],
+               )
+               .join(" • "),
+           )}</td>
 
 
     <td><a class="btn secondary" href="/q/${r.item_id}">IN / OUT</a></td>
@@ -305,11 +297,11 @@ ${nav(req, "stock")}
         <thead>
           <tr>
            <th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th>
-           <th>IN</th><th>OUT</th><th>On hand</th><th>Riservato</th><th>Disponibile</th><th>Riservato per equipment</th><th>Azione</th>
+               <th>IN</th><th>OUT</th><th>On hand</th><th>Da usare per equipment</th><th>Azione</th>
           </tr>
         </thead>
         <tbody>
-      ${rows || `<tr><td colspan="12" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
+       ${rows || `<tr><td colspan="10" class="muted">Nessun dato. Vai su “Items” per aggiungere articoli.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1435,15 +1427,10 @@ app.post("/api/move", requireAuth, async (req, res) => {
 app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
   const rows = await getStockRows({ warehouse: null });
   const reservations = await listStockReservations();
-  const reservedTotals = new Map();
   const reservationBySku = buildReservationViewBySku({
     reservations,
     stockRows: rows,
   });
-  for (const r of reservations) {
-    const prev = reservedTotals.get(r.sku) || 0;
-    reservedTotals.set(r.sku, prev + Number(r.qty_reserved || 0));
-  }
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Stock");
   ws.columns = [
@@ -1456,23 +1443,16 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     { header: "IN", key: "qty_in", width: 10 },
     { header: "OUT", key: "qty_out", width: 10 },
     { header: "OnHand", key: "qty_onhand", width: 10 },
-    { header: "Reserved", key: "qty_reserved", width: 12 },
-    { header: "Available", key: "qty_available", width: 12 },
     {
-      header: "ReservedForEquipment",
-      key: "reserved_for_equipment",
+      header: "UseForEquipment",
+      key: "use_for_equipment",
       width: 40,
     },
   ];
   ws.addRows(
     rows.map((r) => ({
       ...r,
-      qty_reserved: reservedTotals.get(r.sku) || 0,
-      qty_available: Math.max(
-        0,
-        Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0),
-      ),
-      reserved_for_equipment: (reservationBySku.get(r.sku)?.equipmentRows || [])
+      use_for_equipment: (reservationBySku.get(r.sku)?.equipmentRows || [])
         .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
         .concat(
           reservationBySku.get(r.sku)?.warning
@@ -1483,7 +1463,7 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
     })),
   );
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:L1";
+  ws.autoFilter = "A1:J1";
 
   res.setHeader(
     "Content-Type",
