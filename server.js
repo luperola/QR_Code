@@ -1405,6 +1405,13 @@ app.post("/api/move", requireAuth, async (req, res) => {
       });
       return res.status(409).json({ error: `${e.message}`, onhand });
     }
+    console.error("/api/move error", {
+      message: e?.message,
+      code: e?.code,
+      detail: e?.detail,
+      table: e?.table,
+      column: e?.column,
+    });
     return res.status(500).json({ error: "Server error" });
   }
 

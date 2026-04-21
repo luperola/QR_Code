@@ -89,7 +89,13 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
     CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
    
-    ALTER TABLE movements ADD COLUMN IF NOT EXISTS equipment TEXT;  
+   ALTER TABLE movements ADD COLUMN IF NOT EXISTS equipment TEXT;
+    ALTER TABLE bom_rows ADD COLUMN IF NOT EXISTS qty_reserved DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE bom_rows ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'MISSING';
+    ALTER TABLE bom_rows ADD COLUMN IF NOT EXISTS reservation_note TEXT;
+    ALTER TABLE bom_rows ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE stock_reservations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE stock_reservations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     `);
 
   const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
