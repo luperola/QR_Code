@@ -261,7 +261,7 @@ app.get("/", requireAuth, async (req, res) => {
       <td style="text-align:right">${Math.max(0, Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0))}</td>
      <td>${escapeHtml(
        (reservationBySku.get(r.sku)?.equipmentRows || [])
-         .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
+         .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
          .concat(
            reservationBySku.get(r.sku)?.warning
              ? [reservationBySku.get(r.sku).warning]
@@ -1473,7 +1473,7 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
         Number(r.qty_onhand || 0) - (reservedTotals.get(r.sku) || 0),
       ),
       reserved_for_equipment: (reservationBySku.get(r.sku)?.equipmentRows || [])
-        .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
+        .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
         .concat(
           reservationBySku.get(r.sku)?.warning
             ? [reservationBySku.get(r.sku).warning]
