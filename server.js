@@ -128,7 +128,7 @@ function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
     current.qtyReservedTotal += Number(r.qty_reserved || 0);
     current.equipmentRows.push({
       equipment: String(r.equipment || "").trim(),
-      qtyRequired: Number(r.qty_required || 0),
+      qtyReserved: Number(r.qty_reserved || 0),
       uom: String(r.uom || "").trim() || current.uom,
     });
     bySku.set(sku, current);
@@ -930,8 +930,8 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     ? reservationsForSku
         .map((r) => {
           const uom = String(r.uom || "").trim() || "PC";
-          const qtyRequired = Number(r.qty_required || 0);
-          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyRequired} ${escapeHtml(uom)}</li>`;
+          const qtyReserved = Number(r.qty_reserved || 0);
+          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyReserved} ${escapeHtml(uom)}</li>`;
         })
         .concat(
           reservationBySku.get(item.sku)?.warning

@@ -667,7 +667,11 @@ export async function consumeBomReservation({ equipment, sku, qty }) {
     await client.query(
       `
       UPDATE bom_rows r
-      SET qty_reserved = GREATEST(r.qty_reserved - $3, 0),
+       SET qty_required = GREATEST(r.qty_required - $3, 0),
+          qty_reserved = LEAST(
+            GREATEST(r.qty_reserved - $3, 0),
+            GREATEST(r.qty_required - $3, 0)
+          ),
           updated_at = NOW()
       FROM bom_headers h
       WHERE h.id = r.bom_id
