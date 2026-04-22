@@ -14,6 +14,7 @@ import {
   getItemById,
   getItemBySkuLot,
   deleteItemById,
+  clearAllStock,
   addMovementChecked,
   getStockRows,
   listMovements,
@@ -321,7 +322,6 @@ app.get("/items", requireAuth, async (req, res) => {
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
       <td>${escapeHtml(it.lot)}</td>
-      <td>${it.entry_date ? escapeHtml(formatDate(it.entry_date)) : ""}</td>
       <td>${escapeHtml(it.uom || "")}</td>
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(formatDate(it.created_at))}</td>
@@ -359,22 +359,26 @@ ${nav(req, "items")}
       <div class="form-grid">
         <label>SKU<input name="sku" required placeholder="es. DKW-12345" /></label>
         <label>Lot<input name="lot" required placeholder="es. LOT2026-01" /></label>
-        <label>Data ingresso
-          <input name="entry_date" type="date" required />
-        </label>
-        <label>U.M.<input name="uom" placeholder="PC" /></label>
+               <label>U.M.<input name="uom" placeholder="PC" /></label>
         <label>Quantità iniziale<input name="initial_qty" type="number" step="0.01" value="0" /></label>
         <label class="span2">Descrizione<input name="description" required placeholder="es. Tubo 1.4435 EP 1/2&quot;..." /></label>
       </div>
       <div class="row">
         <button class="btn" type="submit">Salva</button>
         <a class="btn secondary" href="/labels">Stampa QR</a>
+         ${
+           canDeleteItems
+             ? `<form method="post" action="/items/stock/clear" onsubmit="return confirm('Azione temporanea STAGE: confermi azzeramento completo stock?');" style="margin:0">
+              <button class="btn danger" type="submit">⚠️ Azzera tutto lo stock (stage)</button>
+            </form>`
+             : ""
+         }
       </div>
     </form>
   </div>
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
-    <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Lot, EntryDate/DataIngresso</span>.</p>
+      <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Lot</span>.</p>
     <form method="post" action="/items/import" enctype="multipart/form-data">
       <input type="file" name="file" accept=".xlsx,.xls" required />
       <div class="row">
@@ -386,9 +390,9 @@ ${nav(req, "items")}
   <div class="card">
     <div class="table-wrap">
       <table>
-       <thead><tr><th>SKU</th><th>Descrizione</th><th>Lot</th><th>Data ingresso</th><th>U.M.</th><th>Qty iniziale</th><th>Creato</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th><th>Creato</th><th>Azioni</th></tr></thead>
         <tbody>
-            ${rows || `<tr><td colspan="8" class="muted">Nessun item.</td></tr>`}
+            ${rows || `<tr><td colspan="7" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -405,6 +409,11 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
   }
 
   await deleteItemById(itemId);
+  return res.redirect("/items");
+});
+
+app.post("/items/stock/clear", requireAdmin, async (req, res) => {
+  await clearAllStock();
   return res.redirect("/items");
 });
 

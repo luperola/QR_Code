@@ -249,6 +249,30 @@ export async function deleteItemById(itemId) {
   }
 }
 
+export async function clearAllStock() {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM movements`);
+    await client.query(`DELETE FROM stock_reservations`);
+    await client.query(
+      `UPDATE bom_rows
+       SET qty_required = 0,
+           qty_reserved = 0,
+           availability = 'OK',
+           reservation_note = 'Stock azzerato manualmente (stage)',
+           updated_at = NOW()`,
+    );
+    await client.query(`UPDATE items SET initial_qty = 0, updated_at = NOW()`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getOnhandForItemAt(
   { item_id, warehouse, location, bin },
   client = db,
