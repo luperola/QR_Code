@@ -329,3 +329,9 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: #000;
   font-weight: 600;
 }
+
+.stock-equipment-select,
+.stock-equipment-select option {
+  background: #0b1f5e;
+  color: #e7ecff;
+}

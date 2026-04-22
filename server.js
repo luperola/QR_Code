@@ -904,10 +904,14 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     return res.status(404).send("Item not found.");
   }
   const bomHeaders = await listBomHeaders();
+  const stockRows = await getStockRows({ warehouse: null });
+  const qtyOnHand = stockRows
+    .filter((r) => r.sku === item.sku && r.lot === item.lot)
+    .reduce((sum, r) => sum + Number(r.qty_onhand || 0), 0);
   const reservations = await listStockReservations();
   const reservationBySku = buildReservationViewBySku({
     reservations,
-    stockRows: await getStockRows({ warehouse: null }),
+    stockRows,
   });
   const reservationsForSku = reservations
     .filter((r) => String(r.sku || "").trim() === String(item.sku || "").trim())
@@ -976,12 +980,12 @@ app.get("/q/:id", requireAuth, async (req, res) => {
       <input type="hidden" name="lot" value="${escapeHtml(item.lot)}" />
 
       <div class="form-grid">
-        <label>Warehouse
-         <input name="warehouse" placeholder="MAIN" value="MAIN" />
+        <label>Qty on hand
+          <input value="${qtyOnHand}" readonly />
         </label>
         <label>Equipment (BOM)
-          <select name="equipment">
-            <option value="">-- Seleziona equipment esistente --</option>
+          <select name="equipment" class="stock-equipment-select">
+            <option value="__NONE__">-- Nessun equipment specifico --</option>
             ${bomOptions}
           </select>
         </label>
@@ -1009,7 +1013,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     </form>
 
     <div class="hr"></div>
-    <p class="muted">Tip: salva questa pagina in Home. Warehouse ed equipment vengono ricordati sul telefono.</p>
+     <p class="muted">Tip: salva questa pagina in Home. L'equipment viene ricordato sul telefono.</p>
   <p class="muted">Se inserisci un nuovo equipment/BOM, verrà creato automaticamente anche nella pagina <span class="mono">/bom</span>.</p>
     </div>
 </main>
@@ -1018,13 +1022,11 @@ app.get("/q/:id", requireAuth, async (req, res) => {
 (function restoreLoc(){
   const f = document.getElementById('moveForm');
   const get = (k) => localStorage.getItem('qrstock_' + k) || '';
-  f.warehouse.value = get('warehouse') || 'MAIN';
-    f.equipment.value = get('equipment') || '';
+ f.equipment.value = get('equipment') || '__NONE__';
 })();
 
 function saveLoc(payload){
-  localStorage.setItem('qrstock_warehouse', payload.warehouse);
-  localStorage.setItem('qrstock_equipment', payload.equipment);
+  localStorage.setItem('qrstock_equipment', payload.equipment || '__NONE__');
 }
 
 function showMsg(text, ok){
@@ -1039,21 +1041,22 @@ async function sendMove(type) {
   const data = new FormData(form);
 const selectedEquipment = String(data.get('equipment') || '').trim().toUpperCase();
   const newEquipment = String(data.get('new_equipment') || '').trim().toUpperCase();
-  const finalEquipment = newEquipment || selectedEquipment;
+  const normalizedSelectedEquipment = selectedEquipment === '__NONE__' ? '' : selectedEquipment;
+  const finalEquipment = type === 'IN' ? '' : (newEquipment || normalizedSelectedEquipment);
   const payload = {
     sku: data.get('sku'),
     lot: data.get('lot'),
     qty: Number(data.get('qty') || 1),
     type,
-    warehouse: String(data.get('warehouse') || 'MAIN').trim() || 'MAIN',
+    warehouse: 'MAIN',
     location: 'DEFAULT',
     bin: 'DEFAULT',
     equipment: finalEquipment,
     note: String(data.get('note') || '').trim()
   };
 
-  if (type === 'OUT' && !payload.equipment) {
-   showMsg("Per OUT seleziona un equipment o inserisci un nuovo nome BOM.", false);
+  if (type === 'OUT' && !newEquipment && !selectedEquipment) {
+    showMsg("Per OUT seleziona un equipment, scegli 'nessun equipment specifico' o inserisci un nuovo nome BOM.", false);
     return;
   }
 
@@ -1074,7 +1077,7 @@ const selectedEquipment = String(data.get('equipment') || '').trim().toUpperCase
 
   const eqLabel = payload.equipment ? " | Equipment: " + payload.equipment : "";
  const createdLabel = out.bom_created ? " | Nuovo BOM registrato" : "";
-  showMsg("OK ✓ Nuovo on-hand (" + payload.warehouse + "): " + out.onhand + eqLabel + createdLabel, true);
+  showMsg("OK ✓ Nuovo on-hand: " + out.onhand + eqLabel + createdLabel, true);
   form.new_equipment.value = '';
 }
 </script>
@@ -1379,11 +1382,6 @@ app.post("/api/move", requireAuth, async (req, res) => {
     .trim()
     .toUpperCase();
 
-  if (type === "OUT" && !eq) {
-    return res
-      .status(400)
-      .json({ error: "Per OUT è obbligatorio selezionare un equipment BOM" });
-  }
   let createdBom = false;
   if (eq) {
     const bom = await getBomByEquipment(eq);
