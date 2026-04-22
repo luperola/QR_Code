@@ -697,18 +697,90 @@ export async function consumeBomReservation({
 
     await client.query(
       `
-      UPDATE bom_rows r
-       SET qty_required = 0,
-          qty_reserved = 0,
-          availability = 'OK',
-          reservation_note = CONCAT(
-            'Prelevati ',
-            TRIM(($3::double precision)::text),
-            ' mt il ',
-            TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'DD/MM/YYYY'),
-            ', ',
-            TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'HH24:MI')
+      SET qty_required = GREATEST(r.qty_required - $3, 0),
+          qty_reserved = GREATEST(
+            LEAST(r.qty_reserved, GREATEST(r.qty_required - $3, 0)),
+            0
           ),
+          availability = CASE
+            WHEN GREATEST(r.qty_required - $3, 0) <= 0 THEN 'OK'
+            WHEN GREATEST(
+              LEAST(r.qty_reserved, GREATEST(r.qty_required - $3, 0)),
+              0
+            ) <= 0 THEN 'MISSING'
+            WHEN GREATEST(
+              LEAST(r.qty_reserved, GREATEST(r.qty_required - $3, 0)),
+              0
+            ) < GREATEST(r.qty_required - $3, 0) THEN 'PARTIAL'
+            ELSE 'OK'
+          END,
+          reservation_note = CASE
+            WHEN GREATEST(r.qty_required - $3, 0) <= 0 THEN CONCAT(
+              'Prelevati ',
+              TRIM(($3::double precision)::text),
+              ' ',
+              COALESCE(
+                NULLIF(
+                  TRIM(
+                    (
+                      SELECT MAX(TRIM(it.uom))
+                      FROM items it
+                      WHERE UPPER(it.sku) = UPPER(r.sku)
+                    )
+                  ),
+                  ''
+                ),
+                'PC'
+              ),
+              ' il ',
+              TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'DD/MM/YYYY'),
+              ', ',
+              TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'HH24:MI')
+            )
+            ELSE CONCAT(
+              r.sku,
+              ': ',
+              TRIM((GREATEST(r.qty_required - $3, 0))::text),
+              ' ',
+              COALESCE(
+                NULLIF(
+                  TRIM(
+                    (
+                      SELECT MAX(TRIM(it.uom))
+                      FROM items it
+                      WHERE UPPER(it.sku) = UPPER(r.sku)
+                    )
+                  ),
+                  ''
+                ),
+                'PC'
+              ),
+              ', da acquistare ',
+              TRIM(
+                (
+                  GREATEST(r.qty_required - $3, 0) - GREATEST(
+                    LEAST(r.qty_reserved, GREATEST(r.qty_required - $3, 0)),
+                    0
+                  )
+                )::text
+              ),
+              ' ',
+              COALESCE(
+                NULLIF(
+                  TRIM(
+                    (
+                      SELECT MAX(TRIM(it.uom))
+                      FROM items it
+                      WHERE UPPER(it.sku) = UPPER(r.sku)
+                    )
+                  ),
+                  ''
+                ),
+                'PC'
+              )
+            )
+          END,
+          
           updated_at = NOW()
       FROM bom_headers h
       WHERE h.id = r.bom_id
