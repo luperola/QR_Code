@@ -307,10 +307,11 @@ export async function addMovementChecked({
       }
     }
 
-    await client.query(
+    const inserted = await client.query(
       `
      INSERT INTO movements (item_id, type, qty, warehouse, location, bin, equipment, operator_user_id, note)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, ts, qty
       `,
       [
         item_id,
@@ -326,6 +327,7 @@ export async function addMovementChecked({
     );
 
     await client.query("COMMIT");
+    return inserted.rows[0] || null;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -644,7 +646,12 @@ export async function upsertBomFromRows(equipment, rows) {
   }
 }
 
-export async function consumeBomReservation({ equipment, sku, qty }) {
+export async function consumeBomReservation({
+  equipment,
+  sku,
+  qty,
+  consumedAt,
+}) {
   const eq = normalizeEquipment(equipment);
   const normalizedSku = String(sku || "").trim();
   const q = Number(qty || 0);
@@ -667,10 +674,16 @@ export async function consumeBomReservation({ equipment, sku, qty }) {
     await client.query(
       `
       UPDATE bom_rows r
-       SET qty_required = GREATEST(r.qty_required - $3, 0),
-          qty_reserved = LEAST(
-            GREATEST(r.qty_reserved - $3, 0),
-            GREATEST(r.qty_required - $3, 0)
+       SET qty_required = 0,
+          qty_reserved = 0,
+          availability = 'OK',
+          reservation_note = CONCAT(
+            'Prelevati ',
+            TRIM(($3::double precision)::text),
+            ' mt il ',
+            TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'DD/MM/YYYY'),
+            ', ',
+            TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'HH24:MI')
           ),
           updated_at = NOW()
       FROM bom_headers h
@@ -678,7 +691,7 @@ export async function consumeBomReservation({ equipment, sku, qty }) {
         AND h.equipment = $1
         AND r.sku = $2
       `,
-      [eq, normalizedSku, q],
+      [eq, normalizedSku, q, consumedAt],
     );
 
     await client.query("COMMIT");

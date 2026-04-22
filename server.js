@@ -1392,7 +1392,7 @@ app.post("/api/move", requireAuth, async (req, res) => {
   }
 
   try {
-    await addMovementChecked({
+    const movement = await addMovementChecked({
       item_id: item.id,
       type,
       qty: q,
@@ -1404,7 +1404,12 @@ app.post("/api/move", requireAuth, async (req, res) => {
       note: note ? String(note).trim() : null,
     });
     if (type === "OUT" && eq) {
-      await consumeBomReservation({ equipment: eq, sku: item.sku, qty: q });
+      await consumeBomReservation({
+        equipment: eq,
+        sku: item.sku,
+        qty: q,
+        consumedAt: movement?.ts || null,
+      });
     }
   } catch (e) {
     if (e?.code === "INSUFFICIENT_STOCK") {
