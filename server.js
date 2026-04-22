@@ -943,8 +943,8 @@ app.get("/q/:id", requireAuth, async (req, res) => {
     ? reservationsForSku
         .map((r) => {
           const uom = String(r.uom || "").trim() || "PC";
-          const qtyReserved = Number(r.qty_reserved || 0);
-          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyReserved} ${escapeHtml(uom)}</li>`;
+          const qtyRequired = Number(r.qty_required || 0);
+          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyRequired} ${escapeHtml(uom)}</li>`;
         })
         .concat(
           reservationBySku.get(item.sku)?.warning
