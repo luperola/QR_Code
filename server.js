@@ -14,7 +14,6 @@ import {
   getItemById,
   getItemBySkuLot,
   deleteItemById,
-  clearAllStock,
   addMovementChecked,
   getStockRows,
   listMovements,
@@ -315,6 +314,12 @@ ${nav(req, "stock")}
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
   const canDeleteItems = req.user?.role === "admin";
+  const imported = Number.parseInt(String(req.query.imported || ""), 10);
+  const skipped = Number.parseInt(String(req.query.skipped || ""), 10);
+  const importMessage =
+    Number.isInteger(imported) && Number.isInteger(skipped)
+      ? `<div class="flash ok">Import completato. OK=${imported}, Skipped=${skipped}.</div>`
+      : "";
   const rows = items
     .map(
       (it) => `
@@ -352,6 +357,7 @@ ${nav(req, "items")}
 
 <main class="container">
   <h1>Items</h1>
+${importMessage}
 
   <div class="card pad">
     <h2>Aggiungi / aggiorna item (SKU+Lot univoco)</h2>
@@ -366,14 +372,7 @@ ${nav(req, "items")}
       <div class="row">
         <button class="btn" type="submit">Salva</button>
         <a class="btn secondary" href="/labels">Stampa QR</a>
-         ${
-           canDeleteItems
-             ? `<form method="post" action="/items/stock/clear" onsubmit="return confirm('Azione temporanea STAGE: confermi azzeramento completo stock?');" style="margin:0">
-              <button class="btn danger" type="submit">⚠️ Azzera tutto lo stock (stage)</button>
-            </form>`
-             : ""
-         }
-      </div>
+               </div>
     </form>
   </div>
   <div class="card pad">
@@ -409,11 +408,6 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
   }
 
   await deleteItemById(itemId);
-  return res.redirect("/items");
-});
-
-app.post("/items/stock/clear", requireAdmin, async (req, res) => {
-  await clearAllStock();
   return res.redirect("/items");
 });
 
@@ -585,9 +579,7 @@ app.post(
       ok++;
     }
 
-    res.send(
-      `Import completato. OK=${ok}, Skipped=${skipped}. <a href="/items">Torna a Items</a>`,
-    );
+    return res.redirect(`/items?imported=${ok}&skipped=${skipped}`);
   },
 );
 
