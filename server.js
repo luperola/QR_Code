@@ -1078,8 +1078,9 @@ const selectedEquipment = String(data.get('equipment') || '').trim().toUpperCase
 
   const eqLabel = payload.equipment ? " | Equipment: " + payload.equipment : "";
  const createdLabel = out.bom_created ? " | Nuovo BOM registrato" : "";
-  showMsg("OK ✓ Nuovo on-hand: " + out.onhand + eqLabel + createdLabel, true);
+  showMsg("OK ✓ Nuovo on-hand: " + out.onhand + eqLabel + createdLabel + " | Aggiornamento pagina...", true);
   form.new_equipment.value = '';
+  setTimeout(() => window.location.reload(), 700);
 }
 </script>
 </body>
