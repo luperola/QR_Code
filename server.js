@@ -775,6 +775,13 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const bom = await getBomByEquipment(equipment);
   if (!bom) return res.status(404).send("BOM non trovato");
+  const stockRows = await getStockRows({ warehouse: null });
+  const onhandBySku = stockRows.reduce((acc, row) => {
+    const sku = String(row.sku || "").trim();
+    if (!sku) return acc;
+    acc.set(sku, (acc.get(sku) || 0) + Number(row.qty_onhand || 0));
+    return acc;
+  }, new Map());
   const bomSkus = bom.rows
     .map((r) => String(r.sku || "").trim())
     .filter(Boolean);
@@ -805,37 +812,36 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
         0,
       );
       const originalQtyRequired = Number(r.qty_required || 0) + totalPickedQty;
-      const prelieviNote = skuOutMovements.length
-        ? skuOutMovements
-            .map((m) => {
-              const ts = new Date(m.ts);
-              const day = ts.toLocaleDateString("it-IT", {
-                timeZone: "Europe/Rome",
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              });
-              const hour = ts.toLocaleTimeString("it-IT", {
-                timeZone: "Europe/Rome",
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              });
-              return `Prelevati ${Number(m.qty)} mt, ${day}, ${hour}`;
-            })
-            .join(" • ")
-        : "";
-      const normalizedReservationNote = String(r.reservation_note || "")
-        .trim()
-        .replace(
-          new RegExp(
-            `^${sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*`,
-            "i",
-          ),
-          "",
-        )
-        .replace(/DA ACQUISTARE/gi, "ancora da acquistare");
-      const notes = [normalizedReservationNote, prelieviNote]
+      const currentOnhandQty = onhandBySku.get(sku) || 0;
+      const qtyToBuy = Math.max(
+        0,
+        originalQtyRequired - totalPickedQty - currentOnhandQty,
+      );
+      const prelieviNotes = skuOutMovements.length
+        ? skuOutMovements.map((m) => {
+            const ts = new Date(m.ts);
+            const day = ts.toLocaleDateString("it-IT", {
+              timeZone: "Europe/Rome",
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+            });
+            const hour = ts.toLocaleTimeString("it-IT", {
+              timeZone: "Europe/Rome",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            });
+            return `Prelevati ${Number(m.qty)} mt, ${day}, ${hour}`;
+          })
+        : [];
+      const uniquePrelieviNotes = Array.from(new Set(prelieviNotes));
+      const notes = [
+        qtyToBuy > 0 ? `ancora da acquistare: ${qtyToBuy} mt` : "",
+        `On hand attuali : ${currentOnhandQty} mt`,
+        ...uniquePrelieviNotes,
+      ]
+
         .filter(Boolean)
         .join(" • ");
       return `
