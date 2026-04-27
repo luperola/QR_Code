@@ -800,9 +800,14 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
     .map((r) => {
       const sku = String(r.sku || "").trim();
       const skuOutMovements = outMovementsBySku.get(sku) || [];
+      const totalPickedQty = skuOutMovements.reduce(
+        (sum, move) => sum + Number(move.qty || 0),
+        0,
+      );
+      const originalQtyRequired = Number(r.qty_required || 0) + totalPickedQty;
       const prelieviNote = skuOutMovements.length
         ? skuOutMovements
-            .map((m, index) => {
+            .map((m) => {
               const ts = new Date(m.ts);
               const day = ts.toLocaleDateString("it-IT", {
                 timeZone: "Europe/Rome",
@@ -816,7 +821,7 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
                 minute: "2-digit",
                 hour12: false,
               });
-              return `prelevati [OUT#${index + 1} ${Number(m.qty)} mt][${day}][${hour}][${m.id}]`;
+              return `Prelevati ${Number(m.qty)} mt, ${day}, ${hour}`;
             })
             .join(" • ")
         : "";
@@ -827,7 +832,7 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
     <tr>
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description || "")}</td>
-      <td style="text-align:right">${r.qty_required}</td>
+       <td style="text-align:right">${originalQtyRequired}</td>
             <td>${escapeHtml(r.availability)}</td>    
    <td>${escapeHtml(notes)}</td>
     </tr>
@@ -1545,6 +1550,18 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const bom = await getBomByEquipment(equipment);
   if (!bom) return res.status(404).send("BOM non trovato");
+  const bomSkus = bom.rows
+    .map((r) => String(r.sku || "").trim())
+    .filter(Boolean);
+  const outMovements = await listOutMovementsByEquipmentAndSkus(
+    bom.equipment,
+    bomSkus,
+  );
+  const totalPickedBySku = outMovements.reduce((acc, move) => {
+    const sku = String(move.sku || "").trim();
+    acc.set(sku, (acc.get(sku) || 0) + Number(move.qty || 0));
+    return acc;
+  }, new Map());
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(`BOM-${bom.equipment}`.slice(0, 31));
@@ -1560,6 +1577,9 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
     bom.rows.map((r) => ({
       equipment: bom.equipment,
       ...r,
+      qty_required:
+        Number(r.qty_required || 0) +
+        Number(totalPickedBySku.get(String(r.sku || "").trim()) || 0),
     })),
   );
   ws.getRow(1).font = { bold: true };
