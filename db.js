@@ -443,6 +443,40 @@ export async function getBomByEquipment(equipment) {
   return { ...header, rows: rows.rows };
 }
 
+export async function listOutMovementsByEquipmentAndSkus(equipment, skus = []) {
+  const eq = normalizeEquipment(equipment);
+  const normalizedSkus = Array.from(
+    new Set(
+      (Array.isArray(skus) ? skus : [])
+        .map((sku) => String(sku || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!eq || normalizedSkus.length === 0) {
+    return [];
+  }
+
+  const { rows } = await db.query(
+    `
+    SELECT
+      m.id,
+      m.ts,
+      m.qty,
+      i.sku
+    FROM movements m
+    JOIN items i ON i.id = m.item_id
+    WHERE m.type = 'OUT'
+      AND COALESCE(TRIM(m.equipment), '') = $1
+      AND i.sku = ANY($2::text[])
+    ORDER BY m.ts ASC, m.id ASC
+    `,
+    [eq, normalizedSkus],
+  );
+
+  return rows;
+}
+
 export async function deleteBomByEquipment(equipment) {
   const eq = normalizeEquipment(equipment);
   if (!eq) {

@@ -29,6 +29,7 @@ import {
   getOnhandForItemAt,
   listBomHeaders,
   getBomByEquipment,
+  listOutMovementsByEquipmentAndSkus,
   deleteBomByEquipment,
   upsertBomFromRows,
   ensureBomHeader,
@@ -774,6 +775,21 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const bom = await getBomByEquipment(equipment);
   if (!bom) return res.status(404).send("BOM non trovato");
+  const bomSkus = bom.rows
+    .map((r) => String(r.sku || "").trim())
+    .filter(Boolean);
+  const outMovements = await listOutMovementsByEquipmentAndSkus(
+    bom.equipment,
+    bomSkus,
+  );
+  const outMovementsBySku = outMovements.reduce((acc, move) => {
+    const sku = String(move.sku || "").trim();
+    if (!acc.has(sku)) {
+      acc.set(sku, []);
+    }
+    acc.get(sku).push(move);
+    return acc;
+  }, new Map());
   const imported = Number.parseInt(String(req.query.imported || ""), 10);
   const skipped = Number.parseInt(String(req.query.skipped || ""), 10);
   const importMessage =
@@ -781,17 +797,43 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
       ? `<div class="flash ok">Import BOM completato. Righe valide=${imported}, righe ignorate=${skipped}.</div>`
       : "";
   const rows = bom.rows
-    .map(
-      (r) => `
+    .map((r) => {
+      const sku = String(r.sku || "").trim();
+      const skuOutMovements = outMovementsBySku.get(sku) || [];
+      const prelieviNote = skuOutMovements.length
+        ? skuOutMovements
+            .map((m, index) => {
+              const ts = new Date(m.ts);
+              const day = ts.toLocaleDateString("it-IT", {
+                timeZone: "Europe/Rome",
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              });
+              const hour = ts.toLocaleTimeString("it-IT", {
+                timeZone: "Europe/Rome",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              });
+              return `prelevati [OUT#${index + 1} ${Number(m.qty)} mt][${day}][${hour}][${m.id}]`;
+            })
+            .join(" • ")
+        : "";
+      const notes = [String(r.reservation_note || "").trim(), prelieviNote]
+        .filter(Boolean)
+        .join(" • ");
+      return `
     <tr>
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description || "")}</td>
       <td style="text-align:right">${r.qty_required}</td>
             <td>${escapeHtml(r.availability)}</td>
       <td>${escapeHtml(r.reservation_note || "")}</td>
+   <td>${escapeHtml(notes)}</td>
     </tr>
-  `,
-    )
+  `;
+    })
     .join("");
 
   res.send(`<!doctype html>
