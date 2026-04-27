@@ -1070,6 +1070,7 @@ app.get("/q/:id", requireAuth, async (req, res) => {
         <button class="btn ok" type="button" onclick="sendMove('IN')">IN</button>
         <button class="btn danger" type="button" onclick="sendMove('OUT')">OUT</button>
         <a class="btn secondary" href="/">Stock</a>
+      <a class="btn secondary" href="/bom">Ritorna a BOM</a>      </div>
       </div>
 
       <div id="msg" class="flash" style="margin-top:10px; display:none;"></div>
