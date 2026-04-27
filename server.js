@@ -825,7 +825,17 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
             })
             .join(" • ")
         : "";
-      const notes = [String(r.reservation_note || "").trim(), prelieviNote]
+      const normalizedReservationNote = String(r.reservation_note || "")
+        .trim()
+        .replace(
+          new RegExp(
+            `^${sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*`,
+            "i",
+          ),
+          "",
+        )
+        .replace(/DA ACQUISTARE/gi, "ancora da acquistare");
+      const notes = [normalizedReservationNote, prelieviNote]
         .filter(Boolean)
         .join(" • ");
       return `

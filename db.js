@@ -636,7 +636,9 @@ export async function upsertBomFromRows(equipment, rows) {
       const qtyMissing = Math.max(0, row.qty_required - qtyReserved);
 
       const note =
-        availability === "OK" ? "" : `DA ACQUISTARE: ${qtyMissing} ${uom}`;
+        availability === "OK"
+          ? ""
+          : `ancora da acquistare: ${qtyMissing} ${uom}`;
       await client.query(
         `
         INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)
@@ -747,9 +749,7 @@ export async function consumeBomReservation({
               TO_CHAR(COALESCE($4::timestamptz, NOW()) AT TIME ZONE 'Europe/Rome', 'HH24:MI')
             )
             ELSE CONCAT(
-              r.sku,
-              ': ',
-              'DA ACQUISTARE: ',
+               'ancora da acquistare: ',
               TRIM(
                 (
                   GREATEST(r.qty_required - $3, 0) - GREATEST(
