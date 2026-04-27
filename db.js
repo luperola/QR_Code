@@ -636,9 +636,7 @@ export async function upsertBomFromRows(equipment, rows) {
       const qtyMissing = Math.max(0, row.qty_required - qtyReserved);
 
       const note =
-        availability === "OK"
-          ? ""
-          : `${row.sku}: ${row.qty_required} ${uom}, da acquistare ${qtyMissing} ${uom}`;
+        availability === "OK" ? "" : `DA ACQUISTARE: ${qtyMissing} ${uom}`;
       await client.query(
         `
         INSERT INTO bom_rows (bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note, updated_at)
@@ -751,22 +749,7 @@ export async function consumeBomReservation({
             ELSE CONCAT(
               r.sku,
               ': ',
-              TRIM((GREATEST(r.qty_required - $3, 0))::text),
-              ' ',
-              COALESCE(
-                NULLIF(
-                  TRIM(
-                    (
-                      SELECT MAX(TRIM(it.uom))
-                      FROM items it
-                      WHERE UPPER(it.sku) = UPPER(r.sku)
-                    )
-                  ),
-                  ''
-                ),
-                'PC'
-              ),
-              ', da acquistare ',
+              'DA ACQUISTARE: ',
               TRIM(
                 (
                   GREATEST(r.qty_required - $3, 0) - GREATEST(

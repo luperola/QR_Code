@@ -828,8 +828,7 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description || "")}</td>
       <td style="text-align:right">${r.qty_required}</td>
-            <td>${escapeHtml(r.availability)}</td>
-      <td>${escapeHtml(r.reservation_note || "")}</td>
+            <td>${escapeHtml(r.availability)}</td>    
    <td>${escapeHtml(notes)}</td>
     </tr>
   `;
