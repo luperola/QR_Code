@@ -249,6 +249,24 @@ export async function deleteItemById(itemId) {
   }
 }
 
+export async function clearAllStockAndMovements() {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM movements`);
+    await client.query(`DELETE FROM items`);
+    await client.query(`DELETE FROM stock_reservations`);
+    await client.query(`DELETE FROM bom_rows`);
+    await client.query(`DELETE FROM bom_headers`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getOnhandForItemAt(
   { item_id, warehouse, location, bin },
   client = db,

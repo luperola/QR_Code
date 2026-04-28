@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFile } from "fs/promises";
 import QRCode from "qrcode";
 import cookieSession from "cookie-session";
 import multer from "multer";
@@ -35,6 +36,7 @@ import {
   ensureBomHeader,
   listStockReservations,
   consumeBomReservation,
+  clearAllStockAndMovements,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -103,6 +105,154 @@ function escapeHtml(s = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function normalizeHeader(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function parseItemsFromWorksheet(workbook) {
+  const sheetName = workbook.SheetNames[0];
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+
+  const date1904 = !!(
+    workbook.Workbook &&
+    workbook.Workbook.WBProps &&
+    workbook.Workbook.WBProps.date1904
+  );
+
+  function toIsoDate(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function parseEntryDate(value) {
+    if (value === null || value === undefined) return null;
+
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return toIsoDate(value);
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const dc = XLSX.SSF.parse_date_code(value, { date1904 });
+      if (dc && dc.y && dc.m && dc.d) {
+        const d = new Date(dc.y, dc.m - 1, dc.d);
+        return toIsoDate(d);
+      }
+      return null;
+    }
+
+    const s = String(value).trim();
+    if (!s) return null;
+
+    if (s.startsWith("=")) {
+      const today = new Date();
+      return toIsoDate(today);
+    }
+
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) return s;
+
+    const it = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (it) {
+      const dd = Number(it[1]);
+      const mm = Number(it[2]);
+      const yyyy = Number(it[3]);
+      const d = new Date(yyyy, mm - 1, dd);
+      if (!Number.isNaN(d.getTime())) return toIsoDate(d);
+    }
+
+    const t = Date.parse(s);
+    if (!Number.isNaN(t)) return toIsoDate(new Date(t));
+
+    return null;
+  }
+
+  const getValue = (row, ...aliases) => {
+    const keys = Object.keys(row);
+    const wanted = aliases.map((a) => normalizeHeader(a));
+
+    for (const wantedName of wanted) {
+      const exact = keys.find((k) => normalizeHeader(k) === wantedName);
+      if (exact) return row[exact];
+    }
+
+    for (const wantedName of wanted) {
+      const partial = keys.find((k) => normalizeHeader(k).includes(wantedName));
+      if (partial) return row[partial];
+    }
+
+    return "";
+  };
+
+  return rows.map((row) => {
+    const sku = String(
+      getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU"),
+    ).trim();
+    const description = String(
+      getValue(row, "Description", "Descrizione"),
+    ).trim();
+    const lot = String(getValue(row, "Lot", "LOT", "Nr Linde")).trim();
+    const lotFallback = String(getValue(row, "Nr.", "Nr")).trim();
+
+    const entryRaw = getValue(
+      row,
+      "EntryDate",
+      "DataIngresso",
+      "Data ingresso",
+      "Entry Date",
+      "Data Ingresso",
+    );
+    const entry_date = parseEntryDate(entryRaw);
+
+    const uomRaw = getValue(
+      row,
+      "UoM",
+      "UOM",
+      "UM",
+      "U.M.",
+      "U.M",
+      "u.m.",
+      "Unit",
+      "Unita",
+      "Unità",
+    );
+    const uom = String(uomRaw || "").trim() || "PC";
+
+    const qtyRaw = getValue(
+      row,
+      "InitialQty",
+      "Qty",
+      "Quantita",
+      "Quantità",
+      "Qta",
+      "Q.tà",
+      "QTY",
+      "Giacenza",
+    );
+    const initial_qty =
+      typeof qtyRaw === "number"
+        ? qtyRaw
+        : Number(String(qtyRaw || "").replace(",", "."));
+
+    return {
+      sku,
+      description,
+      lot: lot || lotFallback,
+      entry_date,
+      uom,
+      initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
+    };
+  });
 }
 
 function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
@@ -321,6 +471,10 @@ app.get("/items", requireAuth, async (req, res) => {
     Number.isInteger(imported) && Number.isInteger(skipped)
       ? `<div class="flash ok">Import completato. OK=${imported}, Skipped=${skipped}.</div>`
       : "";
+  const cleared = String(req.query.cleared || "") === "1";
+  const clearMessage = cleared
+    ? `<div class="flash ok">Stock e movimenti cancellati.</div>`
+    : "";
   const rows = items
     .map(
       (it) => `
@@ -359,6 +513,7 @@ ${nav(req, "items")}
 <main class="container">
   <h1>Items</h1>
 ${importMessage}
+${clearMessage}
 
   <div class="card pad">
     <h2>Aggiungi / aggiorna item (SKU+Lot univoco)</h2>
@@ -378,14 +533,22 @@ ${importMessage}
   </div>
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
-      <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Lot</span>.</p>
+     <p class="muted">Header supportati: <span class="mono">SKU Tecnico, Descrizione, Nr Linde, Giacenza, u.m., valore, costo unitario</span>.</p>
     <form method="post" action="/items/import" enctype="multipart/form-data">
       <input type="file" name="file" accept=".xlsx,.xls" required />
       <div class="row">
         <button class="btn ok" type="submit">Importa</button>
+         <button class="btn secondary" type="submit" formaction="/items/import/default-stock" formmethod="post">Importa Stock_26042025_con_SKU.xlsx</button>
         <a class="btn secondary" href="/export/items-template.xlsx">Scarica template</a>
       </div>
     </form>
+    ${
+      canDeleteItems
+        ? `<form method="post" action="/items/reset-stock" onsubmit="return confirm('Confermi la cancellazione TEMPORANEA di stock, movimenti e BOM?');" style="margin-top:12px">
+            <button class="btn danger" type="submit">TEMPORARY: elimina stock + movimenti</button>
+          </form>`
+        : ""
+    }
   </div>
   <div class="card">
     <div class="table-wrap">
@@ -437,133 +600,14 @@ app.post(
   upload.single("file"),
   async (req, res) => {
     if (!req.file) return res.status(400).send("No file uploaded");
-
     const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
-    const sheetName = wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
-
-    const norm = (s) =>
-      String(s || "")
-        .trim()
-        .toLowerCase();
-
-    const date1904 = !!(
-      wb.Workbook &&
-      wb.Workbook.WBProps &&
-      wb.Workbook.WBProps.date1904
-    );
-
-    function toIsoDate(d) {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
-    }
-
-    function parseEntryDate(value) {
-      if (value === null || value === undefined) return null;
-
-      if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return toIsoDate(value);
-      }
-
-      if (typeof value === "number" && Number.isFinite(value)) {
-        const dc = XLSX.SSF.parse_date_code(value, { date1904 });
-        if (dc && dc.y && dc.m && dc.d) {
-          const d = new Date(dc.y, dc.m - 1, dc.d);
-          return toIsoDate(d);
-        }
-        return null;
-      }
-
-      const s = String(value).trim();
-      if (!s) return null;
-
-      if (s.startsWith("=")) {
-        const today = new Date();
-        return toIsoDate(today);
-      }
-
-      const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (iso) return s;
-
-      const it = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-      if (it) {
-        const dd = Number(it[1]);
-        const mm = Number(it[2]);
-        const yyyy = Number(it[3]);
-        const d = new Date(yyyy, mm - 1, dd);
-        if (!Number.isNaN(d.getTime())) return toIsoDate(d);
-      }
-
-      const t = Date.parse(s);
-      if (!Number.isNaN(t)) return toIsoDate(new Date(t));
-
-      return null;
-    }
+    const parsedRows = parseItemsFromWorksheet(wb);
 
     let ok = 0;
     let skipped = 0;
 
-    for (const r of rows) {
-      const keys = Object.keys(r);
-
-      const get = (...names) => {
-        const wanted = names.map((n) => norm(n));
-
-        for (const n of wanted) {
-          const k = keys.find((k) => norm(k) === n);
-          if (k) return r[k];
-        }
-
-        for (const n of wanted) {
-          const k = keys.find((k) => norm(k).includes(n));
-          if (k) return r[k];
-        }
-
-        return "";
-      };
-
-      const sku = String(get("SKU", "Sku")).trim();
-      const description = String(get("Description", "Descrizione")).trim();
-      const lot = String(get("Lot", "LOT")).trim();
-
-      const entryRaw = get(
-        "EntryDate",
-        "DataIngresso",
-        "Data ingresso",
-        "Entry Date",
-        "Data Ingresso",
-      );
-      const entry_date = parseEntryDate(entryRaw);
-
-      const uomRaw = get(
-        "UoM",
-        "UOM",
-        "UM",
-        "U.M.",
-        "Unit",
-        "Unita",
-        "Unità",
-        "U.M",
-      );
-      const uom = String(uomRaw || "").trim() || "PC";
-
-      const qtyRaw = get(
-        "InitialQty",
-        "Qty",
-        "Quantita",
-        "Quantità",
-        "Qta",
-        "Q.tà",
-        "QTY",
-      );
-      const initial_qty =
-        typeof qtyRaw === "number"
-          ? qtyRaw
-          : Number(String(qtyRaw || "").replace(",", "."));
-
+    for (const parsed of parsedRows) {
+      const { sku, description, lot, entry_date, uom, initial_qty } = parsed;
       if (!sku || !description || !lot) {
         skipped++;
         continue;
@@ -575,7 +619,7 @@ app.post(
         lot,
         entry_date,
         uom,
-        initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
+        initial_qty,
       });
       ok++;
     }
@@ -583,6 +627,41 @@ app.post(
     return res.redirect(`/items?imported=${ok}&skipped=${skipped}`);
   },
 );
+
+app.post("/items/import/default-stock", requireAuth, async (req, res) => {
+  const defaultStockPath = path.join(__dirname, "Stock_26042025_con_SKU.xlsx");
+  const fileBuffer = await readFile(defaultStockPath);
+  const wb = XLSX.read(fileBuffer, { type: "buffer", cellDates: true });
+  const parsedRows = parseItemsFromWorksheet(wb);
+
+  let ok = 0;
+  let skipped = 0;
+
+  for (const parsed of parsedRows) {
+    const { sku, description, lot, entry_date, uom, initial_qty } = parsed;
+    if (!sku || !description || !lot) {
+      skipped++;
+      continue;
+    }
+
+    await upsertItem({
+      sku,
+      description,
+      lot,
+      entry_date,
+      uom,
+      initial_qty,
+    });
+    ok++;
+  }
+
+  return res.redirect(`/items?imported=${ok}&skipped=${skipped}`);
+});
+
+app.post("/items/reset-stock", requireAdmin, async (req, res) => {
+  await clearAllStockAndMovements();
+  return res.redirect("/items?cleared=1");
+});
 
 app.get("/bom", requireAuth, async (req, res) => {
   const headers = await listBomHeaders();
