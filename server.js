@@ -420,7 +420,7 @@ app.get("/", requireAuth, async (req, res) => {
     <tr>
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
-      <td>${escapeHtml(r.lot)}</td>
+      <td>${escapeHtml(r.subfamily || "")}</td>
       <td>${escapeHtml(r.uom || "")}</td>
       <td style="text-align:right">${r.initial_qty ?? 0}</td>
                  <td style="text-align:right">${r.qty_in}</td>
@@ -471,7 +471,7 @@ ${nav(req, "stock")}
       <table>
         <thead>
           <tr>
-           <th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th>
+            <th>SKU</th><th>Descrizione</th><th>Sottofamiglia</th><th>U.M.</th><th>Qty iniziale</th>
                <th>IN</th><th>OUT</th><th>On hand</th><th>Da usare per equipment</th><th>Azione</th>
           </tr>
         </thead>
@@ -505,14 +505,12 @@ app.get("/items", requireAuth, async (req, res) => {
       <tr data-family="${escapeHtml(it.family || "")}" data-subfamily="${escapeHtml(it.subfamily || "")}">
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
-        <td>${escapeHtml(it.family || "")}</td>
-      <td>${escapeHtml(it.lot)}</td>      
+      <td>${escapeHtml(it.subfamily || "")}</td>  
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(it.uom || "")}</td>
       <td style="text-align:right">${it.value_amount ?? 0}</td>
       <td style="text-align:right">${it.unit_cost ?? 0}</td>
-      <td>${escapeHtml(formatDate(it.created_at))}</td>
-     <td>
+      <td>
         ${
           canDeleteItems
             ? `<form method="post" action="/items/${it.id}/delete" onsubmit="return confirm('Confermi eliminazione item e relativi movimenti?');">
@@ -598,9 +596,9 @@ ${clearMessage}
     </div>
     <div class="table-wrap">
       <table id="itemsTable">
-        <thead><tr><th>SKU Tecnico</th><th>Descrizione</th><th>Famiglia</th><th>Nr Linde</th><th>Giacenza</th><th>u.m.</th><th>Valore</th><th>Costo Unitario</th><th>Creato</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>SKU Tecnico</th><th>Descrizione</th><th>Sottofamiglia</th><th>Giacenza</th><th>u.m.</th><th>Valore</th><th>Costo Unitario</th><th>Elimina</th></tr></thead>
         <tbody id="itemsTableBody">
-            ${rows || `<tr><td colspan="10" class="muted">Nessun item.</td></tr>`}
+            ${rows || `<tr><td colspan="8" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1701,25 +1699,26 @@ app.get("/export/stock.xlsx", requireAuth, async (req, res) => {
   const ws = wb.addWorksheet("Stock");
   ws.columns = [
     { header: "SKU", key: "sku", width: 18 },
-    { header: "Description", key: "description", width: 42 },
-    { header: "Lot", key: "lot", width: 18 },
-    { header: "UoM", key: "uom", width: 10 },
-    { header: "InitialQty", key: "initial_qty", width: 12 },
-    { header: "Warehouse", key: "warehouse", width: 14 },
+    { header: "Descrizione", key: "description", width: 42 },
+    { header: "Sottofamiglia", key: "subfamily", width: 22 },
+    { header: "U.M.", key: "uom", width: 10 },
+    { header: "Qty iniziale", key: "initial_qty", width: 12 },
     { header: "IN", key: "qty_in", width: 10 },
     { header: "OUT", key: "qty_out", width: 10 },
-    { header: "OnHand", key: "qty_onhand", width: 10 },
+    { header: "On hand", key: "qty_onhand", width: 10 },
     {
-      header: "UseForEquipment",
+      header: "Da usare per equipment",
       key: "use_for_equipment",
       width: 40,
     },
+    { header: "Azione", key: "action", width: 12 },
   ];
   ws.addRows(
     rows.map((r) => ({
       ...r,
+      action: "IN / OUT",
       use_for_equipment: (reservationBySku.get(r.sku)?.equipmentRows || [])
-        .map((e) => `${e.equipment}: ${e.qtyReserved} ${e.uom}`)
+        .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
         .concat(
           reservationBySku.get(r.sku)?.warning
             ? [reservationBySku.get(r.sku).warning]
