@@ -195,6 +195,10 @@ function parseItemsFromWorksheet(workbook) {
   };
 
   return rows.map((row) => {
+    const family = String(getValue(row, "Famiglia", "Family")).trim();
+    const subfamily = String(
+      getValue(row, "Sottofamiglia", "Sotto famiglia", "Subfamily"),
+    ).trim();
     const sku = String(
       getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU"),
     ).trim();
@@ -243,14 +247,34 @@ function parseItemsFromWorksheet(workbook) {
       typeof qtyRaw === "number"
         ? qtyRaw
         : Number(String(qtyRaw || "").replace(",", "."));
+    const valueRaw = getValue(row, "Valore", "Value");
+    const value_amount =
+      typeof valueRaw === "number"
+        ? valueRaw
+        : Number(String(valueRaw || "").replace(",", "."));
+    const unitCostRaw = getValue(
+      row,
+      "Costo Unitario",
+      "CostoUnitario",
+      "Cost Unit",
+      "Unit Cost",
+    );
+    const unit_cost =
+      typeof unitCostRaw === "number"
+        ? unitCostRaw
+        : Number(String(unitCostRaw || "").replace(",", "."));
 
     return {
       sku,
       description,
+      family,
+      subfamily,
       lot: lot || lotFallback,
       entry_date,
       uom,
       initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
+      value_amount: Number.isFinite(value_amount) ? value_amount : 0,
+      unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
     };
   });
 }
@@ -478,12 +502,15 @@ app.get("/items", requireAuth, async (req, res) => {
   const rows = items
     .map(
       (it) => `
-    <tr>
+      <tr data-family="${escapeHtml(it.family || "")}" data-subfamily="${escapeHtml(it.subfamily || "")}">
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
-      <td>${escapeHtml(it.lot)}</td>
-      <td>${escapeHtml(it.uom || "")}</td>
+        <td>${escapeHtml(it.family || "")}</td>
+      <td>${escapeHtml(it.lot)}</td>      
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
+      <td>${escapeHtml(it.uom || "")}</td>
+      <td style="text-align:right">${it.value_amount ?? 0}</td>
+      <td style="text-align:right">${it.unit_cost ?? 0}</td>
       <td>${escapeHtml(formatDate(it.created_at))}</td>
      <td>
         ${
@@ -533,13 +560,12 @@ ${clearMessage}
   </div>
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
-     <p class="muted">Header supportati: <span class="mono">SKU Tecnico, Descrizione, Nr Linde, Giacenza, u.m., valore, costo unitario</span>.</p>
+    <p class="muted">Header supportati: <span class="mono">SKU Tecnico, Descrizione, Famiglia, Sottofamiglia, Nr Linde, Giacenza, u.m., Valore, Costo Unitario</span>.</p>
     <form method="post" action="/items/import" enctype="multipart/form-data">
       <input type="file" name="file" accept=".xlsx,.xls" required />
       <div class="row">
         <button class="btn ok" type="submit">Importa</button>
-         <button class="btn secondary" type="submit" formaction="/items/import/default-stock" formmethod="post">Importa Stock_26042025_con_SKU.xlsx</button>
-        <a class="btn secondary" href="/export/items-template.xlsx">Scarica template</a>
+                 <a class="btn secondary" href="/export/items-template.xlsx">Scarica template</a>
       </div>
     </form>
     ${
@@ -551,16 +577,45 @@ ${clearMessage}
     }
   </div>
   <div class="card">
+  <div class="pad">
+      <label for="familyFilter">Filtra</label>
+      <select id="familyFilter">
+        <option value="">Tutte le sottofamiglie</option>
+        ${Array.from(
+          new Set(
+            items
+              .map((it) => String(it.subfamily || "").trim())
+              .filter(Boolean),
+          ),
+        )
+          .sort((a, b) => a.localeCompare(b, "it"))
+          .map(
+            (sf) =>
+              `<option value="${escapeHtml(sf)}">${escapeHtml(sf)}</option>`,
+          )
+          .join("")}
+      </select>
+    </div>
     <div class="table-wrap">
-      <table>
-        <thead><tr><th>SKU</th><th>Descrizione</th><th>Lot</th><th>U.M.</th><th>Qty iniziale</th><th>Creato</th><th>Azioni</th></tr></thead>
-        <tbody>
-            ${rows || `<tr><td colspan="7" class="muted">Nessun item.</td></tr>`}
+      <table id="itemsTable">
+        <thead><tr><th>SKU Tecnico</th><th>Descrizione</th><th>Famiglia</th><th>Nr Linde</th><th>Giacenza</th><th>u.m.</th><th>Valore</th><th>Costo Unitario</th><th>Creato</th><th>Azioni</th></tr></thead>
+        <tbody id="itemsTableBody">
+            ${rows || `<tr><td colspan="10" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
   </div>
 </main>
+<script>
+document.getElementById("familyFilter")?.addEventListener("change", function () {
+  const selectedSubfamily = this.value;
+  const rows = document.querySelectorAll("#itemsTableBody tr[data-subfamily]");
+  rows.forEach((row) => {
+    const rowSubfamily = row.getAttribute("data-subfamily") || "";
+    row.style.display = !selectedSubfamily || rowSubfamily === selectedSubfamily ? "" : "none";
+  });
+});
+</script>
 </body>
 </html>`);
 });
@@ -570,14 +625,23 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
   if (!Number.isFinite(itemId) || itemId <= 0) {
     return res.status(400).send("Invalid item id");
   }
-
   await deleteItemById(itemId);
   return res.redirect("/items");
 });
 
 app.post("/items", requireAuth, async (req, res) => {
-  const { sku, description, lot, entry_date, uom, initial_qty } =
-    req.body || {};
+  const {
+    sku,
+    description,
+    family,
+    subfamily,
+    lot,
+    entry_date,
+    uom,
+    initial_qty,
+    value_amount,
+    unit_cost,
+  } = req.body || {};
   if (!sku || !description || !lot) {
     return res.status(400).send("Missing fields");
   }
@@ -585,10 +649,14 @@ app.post("/items", requireAuth, async (req, res) => {
   await upsertItem({
     sku: String(sku).trim(),
     description: String(description).trim(),
+    family: String(family).trim(),
+    subfamily: String(subfamily).trim(),
     lot: String(lot).trim(),
     entry_date: entry_date ? String(entry_date).trim() : null,
     uom: (uom ? String(uom).trim() : "PC") || "PC",
     initial_qty: Number(initial_qty || 0),
+    value_amount: Number(value_amount || 0),
+    unit_cost: Number(unit_cost || 0),
   });
 
   res.redirect("/items");
@@ -607,7 +675,18 @@ app.post(
     let skipped = 0;
 
     for (const parsed of parsedRows) {
-      const { sku, description, lot, entry_date, uom, initial_qty } = parsed;
+      const {
+        sku,
+        description,
+        family,
+        subfamily,
+        lot,
+        entry_date,
+        uom,
+        initial_qty,
+        value_amount,
+        unit_cost,
+      } = parsed;
       if (!sku || !description || !lot) {
         skipped++;
         continue;
@@ -616,10 +695,14 @@ app.post(
       await upsertItem({
         sku,
         description,
+        family,
+        subfamily,
         lot,
         entry_date,
         uom,
         initial_qty,
+        value_amount,
+        unit_cost,
       });
       ok++;
     }
@@ -638,7 +721,18 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
   let skipped = 0;
 
   for (const parsed of parsedRows) {
-    const { sku, description, lot, entry_date, uom, initial_qty } = parsed;
+    const {
+      sku,
+      description,
+      family,
+      subfamily,
+      lot,
+      entry_date,
+      uom,
+      initial_qty,
+      value_amount,
+      unit_cost,
+    } = parsed;
     if (!sku || !description || !lot) {
       skipped++;
       continue;
@@ -647,10 +741,14 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
     await upsertItem({
       sku,
       description,
+      family,
+      subfamily,
       lot,
       entry_date,
       uom,
       initial_qty,
+      value_amount,
+      unit_cost,
     });
     ok++;
   }

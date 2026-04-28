@@ -29,10 +29,14 @@ export async function initDb() {
       id BIGSERIAL PRIMARY KEY,
       sku TEXT NOT NULL,
       description TEXT NOT NULL,
+      family TEXT NOT NULL DEFAULT '',
+      subfamily TEXT NOT NULL DEFAULT '',
       lot TEXT NOT NULL,
       entry_date DATE,
       uom TEXT NOT NULL DEFAULT 'PC',
       initial_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+      value_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+      unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(sku, lot)
@@ -96,6 +100,10 @@ export async function initDb() {
     ALTER TABLE bom_rows ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ALTER TABLE stock_reservations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ALTER TABLE stock_reservations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+     ALTER TABLE items ADD COLUMN IF NOT EXISTS family TEXT NOT NULL DEFAULT '';
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS subfamily TEXT NOT NULL DEFAULT '';
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS value_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0;
     `);
 
   const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
@@ -189,23 +197,42 @@ export async function deleteUser({ user_id }) {
 export async function upsertItem({
   sku,
   description,
+  family = "",
+  subfamily = "",
   lot,
   entry_date,
   uom = "PC",
   initial_qty = 0,
+  value_amount = 0,
+  unit_cost = 0,
 }) {
   await db.query(
     `
-    INSERT INTO items (sku, description, lot, entry_date, uom, initial_qty)
-    VALUES ($1,$2,$3,$4,$5,$6)
+    INSERT INTO items (sku, description, family, subfamily, lot, entry_date, uom, initial_qty, value_amount, unit_cost)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     ON CONFLICT(sku, lot) DO UPDATE SET
       description=EXCLUDED.description,
+      family=EXCLUDED.family,
+      subfamily=EXCLUDED.subfamily,
       entry_date=EXCLUDED.entry_date,
       uom=EXCLUDED.uom,
       initial_qty=EXCLUDED.initial_qty,
+      value_amount=EXCLUDED.value_amount,
+      unit_cost=EXCLUDED.unit_cost,
       updated_at=NOW()
     `,
-    [sku, description, lot, entry_date || null, uom, initial_qty],
+    [
+      sku,
+      description,
+      family,
+      subfamily,
+      lot,
+      entry_date || null,
+      uom,
+      initial_qty,
+      value_amount,
+      unit_cost,
+    ],
   );
 }
 
