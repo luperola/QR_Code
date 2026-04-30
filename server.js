@@ -6,6 +6,7 @@ import { readFile } from "fs/promises";
 import QRCode from "qrcode";
 import cookieSession from "cookie-session";
 import multer from "multer";
+import open from "open";
 import XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import {
@@ -1855,8 +1856,19 @@ const PORT = process.env.PORT || 3000;
 
 (async () => {
   await initDb();
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`QR Stock running on http://localhost:${PORT}`);
+
+  app.listen(PORT, "0.0.0.0", async () => {
+    const url = `http://localhost:${PORT}`;
+
+    console.log(`QR Stock running on ${url}`);
     console.log(`For iPhone/Android on LAN: http://<PC_IP>:${PORT}`);
+
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        await open(url, { app: { name: "chrome" } });
+      } catch (err) {
+        await open(url);
+      }
+    }
   });
 })();
