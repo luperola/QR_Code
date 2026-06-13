@@ -335,3 +335,63 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   background: #0b1f5e;
   color: #e7ecff;
 }
+
+/* ===== FIX BOM TABLE DARK MODE ===== */
+
+.table-wrap table {
+  background-color: #1e1e1e;
+  color: #e6e6e6;
+}
+
+.table-wrap thead {
+  background-color: #2c2c2c;
+}
+
+.table-wrap th {
+  color: #ffffff;
+  border-bottom: 1px solid #444;
+}
+
+.table-wrap td {
+  color: #e6e6e6;
+  border-bottom: 1px solid #333;
+}
+
+.table-wrap tr:hover {
+  background-color: #333333;
+}
+.table-wrap tr,
+.dark-table tr {
+  background-color: #1e1e1e;
+}
+/* ===== BOM DARK TABLE ===== */
+
+.dark-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #1e1e1e;
+  color: #e6e6e6;
+}
+
+.dark-table th {
+  background-color: #2c2c2c;
+  color: #ffffff;
+  padding: 10px;
+  border-bottom: 1px solid #444;
+}
+
+.dark-table td {
+  padding: 10px;
+  border-bottom: 1px solid #333;
+  color: #e6e6e6;
+}
+
+.dark-table tr:hover {
+  background-color: #333;
+}
+.table-wrap tr:nth-child(even),
+.table-wrap tr:nth-child(odd),
+.dark-table tr:nth-child(even),
+.dark-table tr:nth-child(odd) {
+  background-color: #1e1e1e !important;
+}

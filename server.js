@@ -10,6 +10,7 @@ import open from "open";
 import XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import {
+  db,
   initDb,
   upsertItem,
   listItems,
@@ -38,6 +39,16 @@ import {
   listStockReservations,
   consumeBomReservation,
   clearAllStockAndMovements,
+  findItemByTechnicalKey,
+  getBomRowById,
+  listItemsByFamilyForBom,
+  listBomSubfamiliesForFamily,
+  matchBomRowToItem,
+  markBomRowToBuy,
+  finalizeBom,
+  searchStockItemsForManual,
+  addManualItemsToBom,
+  matchBomRowToMultipleItems,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -63,6 +74,77 @@ const upload = multer({
 app.use("/static", express.static(path.join(__dirname, "public")));
 
 // ---- Helpers ----
+
+const INCH_TO_MM = {
+  "1/4": "6.35",
+  "3/8": "9.53",
+  "1/2": "12.70",
+  "3/4": "19.05",
+  1: "25.40",
+  '1"': "25.40",
+};
+
+function normText(s) {
+  return String(s || "")
+    .toUpperCase()
+    .replace(",", ".")
+    .replace(/"/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectBrand(text) {
+  const s = normText(text);
+  if (s.includes("ULTRON")) return "ULTRON";
+  if (s.includes("TCC.1")) return "TCC.1";
+  if (s.includes("TCC")) return "TCC";
+  return "";
+}
+
+function detectFamily(text) {
+  const s = normText(text);
+
+  if (s.includes("COAX")) return "COAX-TUBE";
+  if (s.includes("TUBO") || s.includes("TUBE")) return "TUBE";
+  if (s.includes("ELBOW") || s.includes("CURVA")) return "ELBOW";
+  if (s.includes("TEE")) return "TEE";
+  if (s.includes("REDUC")) return "REDUCER";
+  if (s.includes("VALVE")) return "VALVE";
+
+  return "";
+}
+
+function extractOdMm(text) {
+  const s = normText(text);
+
+  for (const [inch, mm] of Object.entries(INCH_TO_MM)) {
+    const cleanInch = inch.replace('"', "");
+    if (s.includes(cleanInch)) return mm;
+  }
+
+  const m = s.match(/(\d{1,2}\.\d{2})\s*X\s*(\d{1,2}\.\d{2})/);
+  if (m) return m[1];
+
+  return "";
+}
+
+function extractThicknessMm(text) {
+  const s = normText(text);
+  const m = s.match(/(\d{1,2}\.\d{2})\s*X\s*(\d{1,2}\.\d{2})/);
+  return m ? m[2] : "";
+}
+
+function buildTechnicalKey({ description, family, brand, size }) {
+  const fullText = `${description || ""} ${family || ""} ${brand || ""} ${size || ""}`;
+
+  const itemType = detectFamily(fullText);
+  const itemBrand = brand || detectBrand(fullText);
+  const od = extractOdMm(fullText);
+  const th = extractThicknessMm(fullText);
+
+  return [itemType, itemBrand, od, th].filter(Boolean).join("|");
+}
+
 function getBaseUrl(req) {
   const forced = process.env.BASE_URL;
   if (forced) return forced.replace(/\/+$/, "");
@@ -197,6 +279,8 @@ function parseItemsFromWorksheet(workbook) {
 
   return rows.map((row) => {
     const family = String(getValue(row, "Famiglia", "Family")).trim();
+    const dimension_1 = String(getValue(row, "Dimensione_1", "Dimensione 1", "Dimension 1", "OD", "Diametro")).trim();
+    const dimension_2 = String(getValue(row, "Dimensione_2", "Dimensione 2", "Dimension 2", "OD2", "Diametro 2")).trim();
     const subfamily = String(
       getValue(row, "Sottofamiglia", "Sotto famiglia", "Subfamily"),
     ).trim();
@@ -276,6 +360,8 @@ function parseItemsFromWorksheet(workbook) {
       initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
       value_amount: Number.isFinite(value_amount) ? value_amount : 0,
       unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
+      dimension_1,
+      dimension_2,
     };
   });
 }
@@ -418,7 +504,7 @@ app.get("/", requireAuth, async (req, res) => {
   const rows = stock
     .map(
       (r) => `
-    <tr>
+    <tr data-search="${escapeHtml([r.sku, r.description, r.family, r.subfamily, r.dimension_1, r.dimension_2, r.lot, r.uom, r.initial_qty, r.qty_onhand, (reservationBySku.get(r.sku)?.equipmentRows || []).map((e) => `${e.equipment} ${e.qtyRequired} ${e.uom}`).join(" ")].join(" "))}">
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.subfamily || "")}</td>
@@ -461,6 +547,18 @@ ${nav(req, "stock")}
   <p class="muted">Apri dal telefono: <span class="mono">${escapeHtml(getBaseUrl(req))}</span></p>
 
   <div class="card pad">
+    <h2>Cerca nello stock</h2>
+    <div class="row" style="margin-top:0; align-items:end">
+      <label style="min-width:320px">Cerca item
+        <input id="stockSearchInput" placeholder="SKU, descrizione, famiglia, dimensione, lotto..." />
+      </label>
+      <button class="btn" type="button" id="stockSearchBtn">Cerca</button>
+      <button class="btn secondary" type="button" id="stockShowAllBtn">Mostra tutto</button>
+      <span id="stockSearchCount" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card pad">
     <div class="row" style="margin-top:0">
             <a class="btn" href="/export/stock.xlsx">Export Stock (XLSX)</a>
       <a class="btn secondary" href="/scan">Scanner (webcam)</a>
@@ -483,6 +581,28 @@ ${nav(req, "stock")}
     </div>
   </div>
 </main>
+<script>
+const stockSearchInput = document.getElementById("stockSearchInput");
+const stockSearchBtn = document.getElementById("stockSearchBtn");
+const stockShowAllBtn = document.getElementById("stockShowAllBtn");
+const stockSearchCount = document.getElementById("stockSearchCount");
+function applyStockSearch() {
+  const q = String(stockSearchInput?.value || "").toLowerCase().trim();
+  const stockRows = Array.from(document.querySelectorAll("tbody tr[data-search]"));
+  let visible = 0;
+  for (const row of stockRows) {
+    const haystack = String(row.getAttribute("data-search") || "").toLowerCase();
+    const ok = !q || haystack.includes(q);
+    row.style.display = ok ? "" : "none";
+    if (ok) visible++;
+  }
+  if (stockSearchCount) stockSearchCount.textContent = q ? (visible + " risultati") : (stockRows.length + " righe totali");
+}
+stockSearchBtn?.addEventListener("click", applyStockSearch);
+stockSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyStockSearch(); } });
+stockShowAllBtn?.addEventListener("click", () => { if (stockSearchInput) stockSearchInput.value = ""; applyStockSearch(); });
+applyStockSearch();
+</script>
 </body>
 </html>`);
 });
@@ -685,6 +805,8 @@ app.post(
         initial_qty,
         value_amount,
         unit_cost,
+        dimension_1,
+        dimension_2,
       } = parsed;
       if (!sku || !description || !lot) {
         skipped++;
@@ -694,14 +816,16 @@ app.post(
       await upsertItem({
         sku,
         description,
-        family,
-        subfamily,
+        family: family || "",
+        subfamily: subfamily || "",
         lot,
         entry_date,
         uom,
         initial_qty,
         value_amount,
         unit_cost,
+        dimension_1,
+        dimension_2,
       });
       ok++;
     }
@@ -731,6 +855,8 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
       initial_qty,
       value_amount,
       unit_cost,
+      dimension_1,
+      dimension_2,
     } = parsed;
     if (!sku || !description || !lot) {
       skipped++;
@@ -748,6 +874,8 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
       initial_qty,
       value_amount,
       unit_cost,
+      dimension_1,
+      dimension_2,
     });
     ok++;
   }
@@ -835,7 +963,7 @@ ${nav(req, "bom")}
         <button class="btn ok" type="submit">Importa BOM</button>
       </div>
     </form>
-    <p class="muted">Header supportati: <span class="mono">SKU, Description/Descrizione, Qty/Quantità</span>.</p>
+    <p class="muted">Header supportati: <span class="mono">DIAMETER, Family, Quantity DIMA / Quantity / Quantity Supplier</span>.</p>
   </div>
 
   <div class="card">
@@ -867,66 +995,136 @@ const handleBomImport = async (req, res) => {
   if (!equipment) return res.status(400).send("Equipment mancante");
 
   const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const sourceRows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+  const sheetName = wb.SheetNames.includes("template1")
+    ? "template1"
+    : wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    defval: "",
+    raw: true,
+  });
 
   const norm = (s) =>
     String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
       .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ");
 
+  const headerRowIndex = matrix.findIndex((row) => {
+    const normalized = row.map(norm);
+    const joined = normalized.join("|");
+    const hasDiameter = normalized.some((h) => h === "diameter" || h.includes("diameter"));
+    const hasFamily = normalized.some((h) => h === "family" || h === "famiglia");
+    const hasQuantity =
+      normalized.some((h) => h === "quantity dima") ||
+      normalized.some((h) => h === "quantity supplier") ||
+      normalized.some((h) => h === "quantity") ||
+      normalized.some((h) => h === "qty" || h === "q ty" || h === "qta") ||
+      joined.includes("quantity dima") ||
+      joined.includes("quantity supplier");
+    return hasDiameter && hasFamily && hasQuantity;
+  });
+
+  if (headerRowIndex < 0) {
+    return res
+      .status(400)
+      .send(
+        "Header BOM non trovata: servono colonne 'DIAMETER', 'Family' e 'Quantity DIMA' / 'Quantity' / 'Quantity Supplier'.",
+      );
+  }
+
+  const headers = matrix[headerRowIndex].map(norm);
+  const col = (...names) => {
+    const wanted = names.map(norm);
+    for (const w of wanted) {
+      const idx = headers.findIndex((h) => h === w);
+      if (idx >= 0) return idx;
+    }
+    for (const w of wanted) {
+      const idx = headers.findIndex((h) => h.includes(w));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  };
+
+  const idx = {
+    no: col("N°", "N", "No"),
+    section: col("Section"),
+    subsection: col("Subsection"),
+    facilities: col("FACILITIES"),
+    materials: col("MATERIALS"),
+    brand: col("BRAND"),
+    characteristics: col("CHARACTERISTICS"),
+    diameter: col("DIAMETER"),
+    qtySupplier: col("Quantity DIMA", "Quantity Supplier", "Quantity", "Qty", "Q.ty", "Qta"),
+    unit: col("unit", "uom", "um", "u.m."),
+    note: col("Note"),
+    family: col("Family", "Famiglia"),
+  };
+
+  if (idx.qtySupplier < 0 || idx.family < 0 || idx.diameter < 0) {
+    return res
+      .status(400)
+      .send("Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier.");
+  }
+
+  const numberValue = (value) => {
+    if (typeof value === "number") return value;
+    const raw = String(value || "").trim();
+    if (!raw) return 0;
+    const s = raw
+      .replace(/\s+/g, "")
+      .replace(/\.(?=\d{3}(\D|$))/g, "")
+      .replace(",", ".");
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const cell = (row, index) => (index >= 0 ? row[index] : "");
   const parsedRows = [];
   let skipped = 0;
-  for (const row of sourceRows) {
-    const keys = Object.keys(row);
-    const get = (...names) => {
-      const wanted = names.map((n) => norm(n));
-      for (const n of wanted) {
-        const exact = keys.find((k) => norm(k) === n);
-        if (exact) return row[exact];
-      }
-      for (const n of wanted) {
-        const partial = keys.find((k) => norm(k).includes(n));
-        if (partial) return row[partial];
-      }
-      return "";
-    };
 
-    const sku = String(get("SKU", "Sku")).trim();
-    const description = String(get("Description", "Descrizione")).trim();
-    const qtyKeys = keys.filter((k) => {
-      const nk = norm(k);
-      return (
-        (nk.includes("qty") ||
-          nk.includes("quantita") ||
-          nk.includes("quantità") ||
-          nk.includes("qta")) &&
-        !nk.includes("riserv") &&
-        !nk.includes("reserved")
-      );
-    });
-    const preferredQtyKey =
-      qtyKeys.find((k) => {
-        const nk = norm(k);
-        return (
-          nk === "qty" ||
-          nk === "quantity" ||
-          nk === "quantita" ||
-          nk === "quantità" ||
-          nk === "qta"
-        );
-      }) || qtyKeys[0];
-    const qtyRaw = preferredQtyKey ? row[preferredQtyKey] : "";
-    const qtyRequired =
-      typeof qtyRaw === "number"
-        ? qtyRaw
-        : Number(String(qtyRaw || "").replace(",", "."));
+  for (let r = headerRowIndex + 1; r < matrix.length; r++) {
+    const row = matrix[r];
+    const qtyRequired = numberValue(cell(row, idx.qtySupplier));
+    const sourceFamily = String(cell(row, idx.family) || "").trim();
+    // Regola richiesta: usare sempre la colonna H / header DIAMETER del BOM come riferimento dimensionale.
+    const sourceDimension = String(cell(row, idx.diameter) || "").trim();
 
-    if (!sku || !Number.isFinite(qtyRequired) || qtyRequired <= 0) {
+    if (!Number.isFinite(qtyRequired) || qtyRequired <= 0) {
       skipped++;
       continue;
     }
-    parsedRows.push({ sku, description, qty_required: qtyRequired });
+    if (!sourceFamily || sourceFamily.toUpperCase() === "SKIP") {
+      skipped++;
+      continue;
+    }
+
+    const descriptionParts = [
+      cell(row, idx.section),
+      cell(row, idx.subsection),
+      cell(row, idx.facilities),
+      cell(row, idx.materials),
+      cell(row, idx.brand),
+      cell(row, idx.characteristics),
+      cell(row, idx.diameter),
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    parsedRows.push({
+      sku: "",
+      description: descriptionParts.join(" | "),
+      qty_required: qtyRequired,
+      source_line_no: Number(cell(row, idx.no)) || r + 1,
+      source_family: sourceFamily,
+      source_dimension: sourceDimension,
+      source_unit: String(cell(row, idx.unit) || "").trim(),
+    });
   }
 
   const result = await upsertBomFromRows(equipment, parsedRows);
@@ -947,88 +1145,328 @@ app.post("/bom/:equipment/delete", requireAuth, async (req, res) => {
   return res.redirect("/bom");
 });
 
+
+app.get("/api/bom-row/:rowId/candidates", requireAuth, async (req, res) => {
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(rowId)) return res.status(400).json({ error: "Invalid row id" });
+
+  const row = await getBomRowById(rowId);
+  if (!row) return res.status(404).json({ error: "Riga BOM non trovata" });
+
+  const family = String(row.source_family || "").trim().toUpperCase();
+  const familyTokens = family.split(/[;,/|+\s]+/).map((v) => v.trim()).filter(Boolean);
+  const needsSubfamilyChoice = familyTokens.some((f) =>
+    f.startsWith("FIT") || f.startsWith("RED") || f.startsWith("REG") || f.startsWith("VAL") || f.startsWith("MAN")
+  );
+  const selectedSubfamilies = String(req.query.subfamilies || req.query.subfamily || "")
+    .split("||")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const search = String(req.query.search || "").trim();
+
+  const baseRow = {
+    id: row.id,
+    equipment: row.equipment,
+    description: row.description,
+    qty_required: Number(row.qty_required || 0),
+    source_family: row.source_family,
+    source_dimension: row.source_dimension,
+    source_unit: row.source_unit,
+  };
+
+  if (needsSubfamilyChoice && selectedSubfamilies.length === 0 && !search) {
+    const subfamilies = await listBomSubfamiliesForFamily({ family: row.source_family });
+    return res.json({
+      row: baseRow,
+      mode: "SUBFAMILY_SELECT",
+      subfamilies,
+      candidates: [],
+    });
+  }
+
+  const candidates = await listItemsByFamilyForBom({
+    family: row.source_family,
+    dimension: row.source_dimension,
+    subfamilies: selectedSubfamilies,
+    search,
+  });
+
+  res.json({
+    row: baseRow,
+    mode: "ITEM_SELECT",
+    selected_subfamilies: selectedSubfamilies,
+    search,
+    candidates,
+  });
+});
+
+app.post("/api/bom-row/:rowId/match", requireAuth, async (req, res) => {
+  const rowId = Number(req.params.rowId);
+  const itemId = Number(req.body?.item_id);
+  if (!Number.isFinite(rowId) || !Number.isFinite(itemId)) {
+    return res.status(400).json({ error: "Riga BOM o item non valido" });
+  }
+
+  try {
+    const result = await matchBomRowToItem({ bomRowId: rowId, itemId, appendWhenAlreadyMatched: true });
+    return res.json({ ok: true, result });
+  } catch (error) {
+    console.error("/api/bom-row match error", error);
+    return res.status(500).json({ error: error.message || "Server error" });
+  }
+});
+
+app.post("/api/bom-row/:rowId/to-buy", requireAuth, async (req, res) => {
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(rowId)) {
+    return res.status(400).json({ error: "Riga BOM non valida" });
+  }
+
+  try {
+    const result = await markBomRowToBuy({ bomRowId: rowId });
+    return res.json({ ok: true, result });
+  } catch (error) {
+    console.error("/api/bom-row to-buy error", error);
+    return res.status(500).json({ error: error.message || "Server error" });
+  }
+});
+
+
+app.post("/bom/:equipment/finalize", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  try {
+    const result = await finalizeBom(equipment);
+    if (!result.ok) {
+      return res.redirect(`/bom/${encodeURIComponent(equipment)}?pending=${result.pending}`);
+    }
+    return res.redirect(`/bom/${encodeURIComponent(equipment)}?finalized=1`);
+  } catch (error) {
+    console.error("/bom finalize error", error);
+    return res.status(500).send(error.message || "Errore durante Termina BOM");
+  }
+});
+
+
+app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(rowId) || rowId <= 0) return res.status(400).send("Riga BOM non valida");
+
+  const row = await getBomRowById(rowId);
+  if (!row) return res.status(404).send("Riga BOM non trovata");
+
+  const selectedSubfamilies = []
+    .concat(req.query.subfamily || [])
+    .concat(String(req.query.subfamilies || "").split("||"))
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  const search = String(req.query.search || "").trim();
+  const family = String(row.source_family || "").trim().toUpperCase();
+  const familyTokens = family.split(/[;,/|+\s]+/).map((v) => v.trim()).filter(Boolean);
+  const needsSubfamilyChoice = familyTokens.some((f) =>
+    f.startsWith("FIT") || f.startsWith("RED") || f.startsWith("REG") || f.startsWith("VAL") || f.startsWith("MAN")
+  );
+
+  const subfamilies = needsSubfamilyChoice ? await listBomSubfamiliesForFamily({ family: row.source_family }) : [];
+  const candidates = (!needsSubfamilyChoice || selectedSubfamilies.length || search)
+    ? await listItemsByFamilyForBom({
+        family: row.source_family,
+        dimension: row.source_dimension,
+        subfamilies: selectedSubfamilies,
+        search,
+      })
+    : [];
+
+  const subfamilyChoices = subfamilies.map((sf) => {
+    const checked = selectedSubfamilies.includes(sf.subfamily) ? "checked" : "";
+    return `<label class="subfamily-choice"><input type="checkbox" name="subfamily" value="${escapeHtml(sf.subfamily)}" ${checked}> <span><b>${escapeHtml(sf.subfamily)}</b> (${Number(sf.items_count || 0)} items)${sf.families ? `<br><small>${escapeHtml(sf.families)}</small>` : ""}</span></label>`;
+  }).join("");
+
+  const candidateRows = candidates.map((c, idx) => `
+    <tr>
+      <td><input type="checkbox" name="item_id" value="${Number(c.item_id)}"></td>
+      <td class="mono">${escapeHtml(c.sku)}</td>
+      <td>${escapeHtml(c.description || "")}</td>
+      <td>${escapeHtml(c.family || "")}</td>
+      <td>${escapeHtml(c.subfamily || "")}</td>
+      <td>${escapeHtml(c.dimension_1 || "")}</td>
+      <td>${escapeHtml(c.dimension_2 || "")}</td>
+      <td>${escapeHtml(c.lot || "")}</td>
+      <td>${escapeHtml(c.uom || "")}</td>
+      <td style="text-align:right"><b>${Number(c.qty_onhand || 0)}</b></td>
+      <td><input name="qty_${Number(c.item_id)}" type="number" step="0.01" min="0" value="${idx === 0 ? Number(row.qty_required || 0) : 0}" style="width:90px"></td>
+    </tr>`).join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scegli item stock • QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .table-wrap table, .table-wrap tr, .table-wrap td { background:#1e1e1e; color:#e6e6e6; }
+    .table-wrap th { background:#2c2c2c; color:#ffffff; }
+    .subfamily-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:8px; margin-top:10px; }
+    .subfamily-choice { display:flex; gap:8px; align-items:flex-start; padding:10px; border:1px solid #374151; border-radius:10px; background:#0f172a; }
+  </style>
+</head>
+<body>
+${nav(req, "bom")}
+<main class="container">
+  <h1>Scegli item da stock</h1>
+  <p><a class="btn secondary" href="/bom/${encodeURIComponent(equipment)}">Annulla e torna al BOM</a></p>
+  <div class="card pad">
+    <p><b>Family BOM:</b> <span class="mono">${escapeHtml(row.source_family || "")}</span></p>
+    <p><b>Dimension:</b> <span class="mono">${escapeHtml(row.source_dimension || "")}</span></p>
+    <p><b>Qty Supplier:</b> ${Number(row.qty_required || 0)} ${escapeHtml(row.source_unit || "")}</p>
+    <p><b>Descrizione:</b> ${escapeHtml(row.description || "")}</p>
+  </div>
+
+  <div class="card pad">
+    <form method="get" action="/bom/${encodeURIComponent(equipment)}/match/${rowId}">
+      <label>Cerca nello stock
+        <input name="search" value="${escapeHtml(search)}" placeholder="SKU, descrizione, dimensione, lotto..." />
+      </label>
+      ${needsSubfamilyChoice ? `<h3>Sottofamiglie</h3><p class="muted">Puoi selezionare una o più sottofamiglie.</p><div class="subfamily-grid">${subfamilyChoices || `<span class="muted">Nessuna sottofamiglia trovata.</span>`}</div>` : ""}
+      <div class="row">
+        <button class="btn ok" type="submit">Cerca / apri items</button>
+        <a class="btn secondary" href="/bom/${encodeURIComponent(equipment)}/match/${rowId}">Pulisci</a>
+      </div>
+    </form>
+  </div>
+
+
+  <div class="card pad">
+    <form method="post" action="/bom/${encodeURIComponent(equipment)}/match/${rowId}/to-buy" onsubmit="return confirm('Segnare questa riga BOM come TO BUY?');">
+      <div class="row" style="margin-top:0; align-items:end">
+        <label>Quantità TO BUY
+          <input name="qty_to_buy" type="number" step="0.01" min="0.01" value="${Number(row.qty_required || 0)}" style="width:140px" />
+        </label>
+        <button class="btn danger" type="submit">TO BUY</button>
+        <span class="muted">Usalo quando l’item non è disponibile a stock oppure devi acquistare solo una parte.</span>
+      </div>
+    </form>
+  </div>
+  <div class="card">
+    <form method="post" action="/bom/${encodeURIComponent(equipment)}/match/${rowId}/multi" style="margin:0">
+      <div class="pad row" style="margin-top:0; align-items:end">
+        <button class="btn ok" type="submit">Conferma selezionati</button>
+        <span class="muted">Seleziona uno o più item e indica la quantità per ciascuno.</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Sottofamiglia</th><th>Dim.1</th><th>Dim.2</th><th>Lot</th><th>U.M.</th><th>Giacenza</th><th>Qty</th></tr></thead>
+          <tbody>${candidateRows || `<tr><td colspan="11" class="muted">${needsSubfamilyChoice && !selectedSubfamilies.length && !search ? "Seleziona una sottofamiglia oppure cerca un testo." : "Nessun item trovato."}</td></tr>`}</tbody>
+        </table>
+      </div>
+    </form>
+  </div>
+</main>
+</body>
+</html>`);
+});
+
+app.post("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const rowId = Number(req.params.rowId);
+  const itemId = Number(req.body?.item_id);
+  if (!Number.isFinite(rowId) || !Number.isFinite(itemId)) return res.status(400).send("Riga BOM o item non valido");
+  try {
+    await matchBomRowToItem({ bomRowId: rowId, itemId, appendWhenAlreadyMatched: true });
+    return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
+  } catch (error) {
+    console.error("POST match page error", error);
+    return res.status(500).send(error.message || "Errore durante il match");
+  }
+});
+
+
+app.post("/bom/:equipment/match/:rowId/to-buy", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const rowId = Number(req.params.rowId);
+  const qtyToBuy = Number(String(req.body?.qty_to_buy || "0").replace(",", "."));
+  if (!Number.isFinite(rowId) || rowId <= 0) return res.status(400).send("Riga BOM non valida");
+  try {
+    await markBomRowToBuy({ bomRowId: rowId, qtyToBuy: Number.isFinite(qtyToBuy) && qtyToBuy > 0 ? qtyToBuy : undefined });
+    return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
+  } catch (error) {
+    console.error("POST match to-buy page error", error);
+    return res.status(500).send(error.message || "Errore durante TO BUY");
+  }
+});
+
+app.post("/bom/:equipment/match/:rowId/multi", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "");
+  const rowId = Number(req.params.rowId);
+  const rawIds = Array.isArray(req.body?.item_id)
+    ? req.body.item_id
+    : (req.body?.item_id ? [req.body.item_id] : []);
+
+  const items = rawIds
+    .map((id) => {
+      const itemId = Number(id);
+      const qty = Number(String(req.body?.[`qty_${itemId}`] || "0").replace(",", "."));
+      return { item_id: itemId, qty_required: qty };
+    })
+    .filter((x) => Number.isFinite(x.item_id) && x.item_id > 0 && Number.isFinite(x.qty_required) && x.qty_required > 0);
+
+  if (!Number.isFinite(rowId) || rowId <= 0 || items.length === 0) {
+    return res.status(400).send("Seleziona almeno un item e indica una quantità maggiore di zero.");
+  }
+
+  try {
+    await matchBomRowToMultipleItems({ bomRowId: rowId, items });
+    return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
+  } catch (error) {
+    console.error("POST multi match page error", error);
+    return res.status(500).send(error.message || "Errore durante il multi match");
+  }
+});
+
+
 app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const bom = await getBomByEquipment(equipment);
   if (!bom) return res.status(404).send("BOM non trovato");
-  const stockRows = await getStockRows({ warehouse: null });
-  const onhandBySku = stockRows.reduce((acc, row) => {
-    const sku = String(row.sku || "").trim();
-    if (!sku) return acc;
-    acc.set(sku, (acc.get(sku) || 0) + Number(row.qty_onhand || 0));
-    return acc;
-  }, new Map());
-  const bomSkus = bom.rows
-    .map((r) => String(r.sku || "").trim())
-    .filter(Boolean);
-  const outMovements = await listOutMovementsByEquipmentAndSkus(
-    bom.equipment,
-    bomSkus,
-  );
-  const outMovementsBySku = outMovements.reduce((acc, move) => {
-    const sku = String(move.sku || "").trim();
-    if (!acc.has(sku)) {
-      acc.set(sku, []);
-    }
-    acc.get(sku).push(move);
-    return acc;
-  }, new Map());
+
   const imported = Number.parseInt(String(req.query.imported || ""), 10);
   const skipped = Number.parseInt(String(req.query.skipped || ""), 10);
   const importMessage =
     Number.isInteger(imported) && Number.isInteger(skipped)
-      ? `<div class="flash ok">Import BOM completato. Righe valide=${imported}, righe ignorate=${skipped}.</div>`
+      ? `<div class="flash ok">Import BOM completato. Righe valide=${imported}, righe ignorate=${skipped}. Ora scegli gli item stock per ogni riga TO_MATCH.</div>`
       : "";
+  const finalizedMessage = String(req.query.finalized || "") === "1"
+    ? `<div class="flash ok">BOM terminato e congelato.</div>`
+    : "";
+  const pendingFinalize = Number.parseInt(String(req.query.pending || ""), 10);
+  const finalizeError = Number.isInteger(pendingFinalize)
+    ? `<div class="flash error">Non posso terminare il BOM: restano ${pendingFinalize} righe TO_MATCH da scegliere.</div>`
+    : "";
+  const statusBadge = bom.status === "FINALIZED"
+    ? `<span class="badge ok">FINALIZED</span>`
+    : `<span class="badge">DRAFT</span>`;
+
   const rows = bom.rows
     .map((r) => {
-      const sku = String(r.sku || "").trim();
-      const skuOutMovements = outMovementsBySku.get(sku) || [];
-      const totalPickedQty = skuOutMovements.reduce(
-        (sum, move) => sum + Number(move.qty || 0),
-        0,
-      );
-      const originalQtyRequired = Number(r.qty_required || 0) + totalPickedQty;
-      const currentOnhandQty = onhandBySku.get(sku) || 0;
-      const qtyToBuy = Math.max(
-        0,
-        originalQtyRequired - totalPickedQty - currentOnhandQty,
-      );
-      const prelieviNotes = skuOutMovements.length
-        ? skuOutMovements.map((m) => {
-            const ts = new Date(m.ts);
-            const day = ts.toLocaleDateString("it-IT", {
-              timeZone: "Europe/Rome",
-              day: "2-digit",
-              month: "2-digit",
-              year: "numeric",
-            });
-            const hour = ts.toLocaleTimeString("it-IT", {
-              timeZone: "Europe/Rome",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            });
-            return `Prelevati ${Number(m.qty)} mt, ${day}, ${hour}`;
-          })
-        : [];
-      const uniquePrelieviNotes = Array.from(new Set(prelieviNotes));
-      const notes = [
-        qtyToBuy > 0 ? `ancora da acquistare: ${qtyToBuy} mt` : "",
-        `On hand attuali : ${currentOnhandQty} mt`,
-        ...uniquePrelieviNotes,
-      ]
-
-        .filter(Boolean)
-        .join(" • ");
+      const isPending = String(r.sku || "").startsWith("__PENDING__") || r.availability === "TO_MATCH";
+      const skuLabel = isPending ? "DA SCEGLIERE" : r.sku;
+      const chooseButton = Number(r.qty_required || 0) > 0
+        ? `<a class="btn secondary js-open-match" href="/bom/${encodeURIComponent(bom.equipment)}/match/${Number(r.id)}" data-row-id="${Number(r.id)}">Scegli da stock</a>`
+        : "";
+      const button = `<div class="row action-buttons">${chooseButton}</div>`;
       return `
-    <tr>
-      <td>${escapeHtml(r.sku)}</td>
+    <tr class="${isPending ? "needs-match" : ""}">
+      <td>${escapeHtml(r.source_family || "")}</td>
+      <td>${escapeHtml(r.source_dimension || "")}</td>
       <td>${escapeHtml(r.description || "")}</td>
-       <td style="text-align:right">${originalQtyRequired}</td>
-            <td>${escapeHtml(r.availability)}</td>    
-   <td>${escapeHtml(notes)}</td>
-    </tr>
-  `;
+      <td style="text-align:right">${Number(r.qty_required || 0)}</td>
+      <td>${escapeHtml(r.source_unit || "")}</td>
+      <td class="mono">${escapeHtml(skuLabel)}</td>
+      <td style="text-align:right">${Number(r.qty_reserved || 0)}</td>
+      <td>${escapeHtml(r.availability || "")}</td>
+      <td>${button}</td>
+    </tr>`;
     })
     .join("");
 
@@ -1039,34 +1477,373 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BOM ${escapeHtml(bom.equipment)} • QR Stock</title>
   <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    tr.needs-match { background: #1e1e1e !important; }
+    .table-wrap table, .table-wrap tr, .table-wrap td { background:#1e1e1e; color:#e6e6e6; }
+    .table-wrap th { background:#2c2c2c; color:#ffffff; }
+    dialog.match-dialog { width: min(1100px, 96vw); border: 0; border-radius: 14px; padding: 0; box-shadow: 0 20px 60px rgba(0,0,0,.25); background:#111827; color:#e6e6e6; }
+    dialog.match-dialog::backdrop { background: rgba(15,23,42,.65); }
+    dialog.match-dialog.force-open { display:block; position:fixed; inset:6vh auto auto 50%; transform:translateX(-50%); z-index:9999; }
+    .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; border-bottom:1px solid #374151; }
+    .modal-body { padding:16px 18px; max-height:70vh; overflow:auto; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#23314f; color:#e6e6e6; margin-right:6px; font-size:12px; }
+    .bom-actions { align-items:stretch; gap:12px; }
+    .bom-actions form { display:inline-flex; margin:0; }
+    .bom-actions .btn { min-height:44px; display:inline-flex; align-items:center; justify-content:center; }
+    .action-buttons { gap:8px; margin:0; }
+    .action-buttons .btn { min-height:40px; }
+    .subfamily-select { min-width:320px; background:#0f172a; color:#e6e6e6; border:1px solid #475569; border-radius:10px; padding:10px; }
+    .modal-search { width:100%; background:#0f172a; color:#e6e6e6; border:1px solid #475569; border-radius:10px; padding:10px; margin-top:6px; }
+    .subfamily-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:8px; margin-top:10px; }
+    .subfamily-choice { display:flex; gap:8px; align-items:flex-start; padding:10px; border:1px solid #374151; border-radius:10px; background:#0f172a; }
+    .subfamily-choice input { margin-top:3px; }
+  </style>
 </head>
 <body>
 ${nav(req, "bom")}
 <main class="container">
   <h1>BOM equipment <span class="mono">${escapeHtml(bom.equipment)}</span></h1>
   <p class="muted">Ultimo aggiornamento: ${escapeHtml(formatDateTimeCET(bom.updated_at))}</p>
-   ${importMessage}
-  <div class="row">
+  ${importMessage}
+  ${finalizedMessage}
+  ${finalizeError}
+  <p>${statusBadge}</p>
+  <div class="row bom-actions">
     <a class="btn secondary" href="/bom">← Torna a BOM</a>
     <a class="btn" href="/export/bom/${encodeURIComponent(bom.equipment)}.xlsx">Export BOM (XLSX)</a>
+    <button class="btn ok" type="button" onclick="openManualAddModal()">Aggiungi item</button>
+    <form method="post" action="/bom/${encodeURIComponent(bom.equipment)}/finalize" style="display:inline" onsubmit="return confirm('Terminare il BOM? Dopo questa conferma il BOM risulta completato.');">
+      <button class="btn ok" type="submit">Termina BOM</button>
+    </form>
   </div>
 
   <div class="card">
     <div class="table-wrap">
       <table>
         <thead>
-           <tr><th>SKU</th><th>Descrizione</th><th>Qty richiesta</th><th>Stato stock</th><th>Note</th></tr>
+          <tr>
+            <th>Family BOM</th><th>Dimension</th><th>Descrizione BOM</th><th>Qty Supplier</th><th>U.M.</th><th>SKU scelto</th><th>Qty riservata</th><th>Stato</th><th>Azione</th>
+          </tr>
         </thead>
         <tbody>
-          ${rows || `<tr><td colspan="5" class="muted">Nessuna riga nel BOM.</td></tr>`}
+          ${rows || `<tr><td colspan="9" class="muted">Nessuna riga nel BOM.</td></tr>`}
         </tbody>
       </table>
     </div>
   </div>
 </main>
+
+
+
+  <dialog id="manualAddDialog" style="width:min(1200px,96vw);max-height:90vh;overflow:auto;">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2>Aggiungi item da stock</h2>
+      <button class="btn secondary" type="button" onclick="closeManualAddModal()">Chiudi</button>
+    </div>
+    <div class="row" style="align-items:end">
+      <label style="min-width:320px">Cerca stock
+        <input id="manualStockSearch" placeholder="SKU, descrizione, famiglia, dimensione, lotto..." />
+      </label>
+      <button class="btn" type="button" onclick="searchManualStock()">Cerca</button>
+      <span id="manualStockCount" class="muted"></span>
+    </div>
+    <div id="manualStockResults" class="table-wrap" style="margin-top:12px"></div>
+  </dialog>
+
+<script>
+const manualDialog = document.getElementById("manualAddDialog");
+function openManualAddModal(){
+  if (typeof manualDialog.showModal === "function") manualDialog.showModal();
+  else manualDialog.setAttribute("open", "open");
+  searchManualStock();
+}
+function closeManualAddModal(){
+  if (manualDialog.open && typeof manualDialog.close === "function") manualDialog.close();
+  else manualDialog.removeAttribute("open");
+}
+async function searchManualStock(){
+  const q = document.getElementById("manualStockSearch")?.value || "";
+  const res = await fetch("/api/stock/manual-search?q=" + encodeURIComponent(q));
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    document.getElementById("manualStockResults").innerHTML = htmlEscape(data.error || "Errore ricerca");
+    return;
+  }
+  renderManualStock(data.items || []);
+}
+function renderManualStock(items){
+  const count = document.getElementById("manualStockCount");
+  if (count) count.textContent = items.length + " risultati";
+  if (!items.length) {
+    document.getElementById("manualStockResults").innerHTML = '<p class="muted">Nessun item trovato.</p>';
+    return;
+  }
+  const body = items.map((it) =>
+    '<tr>' +
+      '<td><input type="checkbox" class="manual-check" data-item-id="' + Number(it.item_id) + '" /></td>' +
+      '<td class="mono">' + htmlEscape(it.sku || "") + '</td>' +
+      '<td>' + htmlEscape(it.description || "") + '</td>' +
+      '<td>' + htmlEscape(it.family || "") + '</td>' +
+      '<td>' + htmlEscape(it.subfamily || "") + '</td>' +
+      '<td>' + htmlEscape(it.dimension_1 || "") + '</td>' +
+      '<td>' + htmlEscape(it.dimension_2 || "") + '</td>' +
+      '<td>' + htmlEscape(it.lot || "") + '</td>' +
+      '<td>' + htmlEscape(it.uom || "") + '</td>' +
+      '<td style="text-align:right"><b>' + Number(it.qty_onhand || 0) + '</b></td>' +
+      '<td><input class="manual-qty" data-item-id="' + Number(it.item_id) + '" type="number" step="0.01" min="0" value="0" style="width:90px" /></td>' +
+    '</tr>'
+  ).join("");
+  document.getElementById("manualStockResults").innerHTML =
+    '<div class="row" style="margin-bottom:10px"><button class="btn ok" type="button" onclick="addSelectedManualItems()">Aggiungi selezionati al BOM</button></div>' +
+    '<table><thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Sottofamiglia</th><th>Dim.1</th><th>Dim.2</th><th>Lot</th><th>U.M.</th><th>Giacenza</th><th>Qty</th></tr></thead><tbody>' + body + '</tbody></table>';
+}
+async function addSelectedManualItems(){
+  const selected = Array.from(document.querySelectorAll(".manual-check:checked")).map((check) => {
+    const itemId = Number(check.dataset.itemId || 0);
+    const qtyInput = document.querySelector('.manual-qty[data-item-id="' + itemId + '"]');
+    return { item_id: itemId, qty_required: Number(qtyInput?.value || 0) };
+  }).filter((x) => Number.isFinite(x.item_id) && x.item_id > 0 && Number.isFinite(x.qty_required) && x.qty_required > 0);
+  if (!selected.length) {
+    alert("Seleziona almeno un item e inserisci una quantità > 0.");
+    return;
+  }
+  const res = await fetch("/api/bom/${encodeURIComponent(bom.equipment)}/manual-items", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: selected })
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    alert(data.error || "Errore aggiunta item");
+    return;
+  }
+  window.location.reload();
+}
+document.getElementById("manualStockSearch")?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchManualStock(); } });
+</script>
+
+<dialog id="matchDialog" class="match-dialog">
+  <div class="modal-head">
+    <div>
+      <h2 style="margin:0">Scegli item da stock</h2>
+      <div id="matchMeta" class="muted"></div>
+    </div>
+    <button class="btn secondary" type="button" onclick="closeMatchModal()">Chiudi</button>
+  </div>
+  <div class="modal-body">
+    <div id="matchCandidates" class="table-wrap muted">Caricamento...</div>
+  </div>
+</dialog>
+
+<script>
+const dialog = document.getElementById("matchDialog");
+let activeBomRowId = null;
+let activeManualFamilyMode = false;
+let activeSelectedSubfamilies = [];
+let activeModalSearch = "";
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function openMatchModal(rowId) {
+  activeBomRowId = rowId;
+  activeSelectedSubfamilies = [];
+  activeModalSearch = "";
+  document.getElementById("matchMeta").innerHTML = "";
+  document.getElementById("matchCandidates").innerHTML = "Caricamento...";
+  try {
+    if (dialog && typeof dialog.showModal === "function" && !dialog.open) {
+      dialog.showModal();
+    } else if (dialog && !dialog.open) {
+      dialog.setAttribute("open", "open");
+      dialog.classList.add("force-open");
+    }
+  } catch (error) {
+    console.error("Errore apertura modale", error);
+    dialog.setAttribute("open", "open");
+    dialog.classList.add("force-open");
+  }
+
+  const res = await fetch("/api/bom-row/" + rowId + "/candidates");
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("matchCandidates").innerHTML = htmlEscape(data.error || "Errore");
+    return;
+  }
+
+  const row = data.row;
+  activeManualFamilyMode = /(^|[;,/|+\s])(FIT|RED|REG|VAL|MAN)/i.test(String(row.source_family || ""));
+  document.getElementById("matchMeta").innerHTML =
+    '<span class="pill">Family: ' + htmlEscape(row.source_family) + '</span>' +
+    '<span class="pill">Dimension: ' + htmlEscape(row.source_dimension || "-") + '</span>' +
+    '<span class="pill">Qty: ' + htmlEscape(row.qty_required) + ' ' + htmlEscape(row.source_unit || "") + '</span>';
+
+  if (data.mode === "SUBFAMILY_SELECT") {
+    const options = (data.subfamilies || []).map((sf, idx) =>
+      '<label class="subfamily-choice">' +
+        '<input type="checkbox" class="subfamilyCheck" value="' + htmlEscape(sf.subfamily) + '"> ' +
+        '<span><b>' + htmlEscape(sf.subfamily) + '</b> (' + Number(sf.items_count || 0) + ' items)' +
+        (sf.families ? '<br><small>' + htmlEscape(sf.families) + '</small>' : '') +
+        '</span>' +
+      '</label>'
+    ).join("");
+
+    document.getElementById("matchCandidates").innerHTML =
+      '<p>Per questa famiglia puoi scegliere <b>una o più sottofamiglie</b>, oppure cercare direttamente tra gli item stock.</p>' +
+      '<div class="row" style="align-items:end; gap:10px; margin-bottom:12px">' +
+        '<label style="flex:1">Cerca negli item stock' +
+          '<input id="modalSearch" class="modal-search" placeholder="SKU, descrizione, dimensione, lotto..." onkeydown="if(event.key===\'Enter\'){loadSubfamilyItems();}">' +
+        '</label>' +
+        '<button class="btn ok" type="button" onclick="loadSubfamilyItems()">Cerca / apri items</button>' +
+        '<button class="btn secondary" type="button" onclick="toggleAllSubfamilies(true)">Seleziona tutte</button>' +
+        '<button class="btn secondary" type="button" onclick="toggleAllSubfamilies(false)">Pulisci</button>' +
+      '</div>' +
+      '<div class="subfamily-grid">' + options + '</div>';
+    setTimeout(() => document.getElementById("modalSearch")?.focus(), 50);
+    return;
+  }
+
+  renderCandidateItems(data.candidates || []);
+}
+
+function toggleAllSubfamilies(checked) {
+  document.querySelectorAll(".subfamilyCheck").forEach((el) => { el.checked = checked; });
+}
+
+async function loadSubfamilyItems() {
+  const checkboxes = Array.from(document.querySelectorAll(".subfamilyCheck"));
+  const selected = checkboxes.length
+    ? checkboxes.filter((el) => el.checked).map((el) => el.value)
+    : activeSelectedSubfamilies;
+  const searchInput = document.getElementById("modalSearch");
+  const search = searchInput ? (searchInput.value || "") : activeModalSearch;
+  if (!selected.length && !search.trim()) {
+    alert("Seleziona almeno una sottofamiglia oppure inserisci un testo nel campo Cerca");
+    return;
+  }
+  activeSelectedSubfamilies = selected;
+  activeModalSearch = search;
+  document.getElementById("matchCandidates").innerHTML = "Caricamento items...";
+  const params = new URLSearchParams();
+  if (selected.length) params.set("subfamilies", selected.join("||"));
+  if (search.trim()) params.set("search", search.trim());
+  const res = await fetch("/api/bom-row/" + activeBomRowId + "/candidates?" + params.toString());
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("matchCandidates").innerHTML = htmlEscape(data.error || "Errore");
+    return;
+  }
+  renderCandidateItems(data.candidates || []);
+}
+
+function renderCandidateItems(candidates) {
+  if (!candidates.length) {
+    document.getElementById("matchCandidates").innerHTML =
+      '<p>Nessun item trovato. Verifica Famiglia/Sottofamiglia nello stock oppure usa il campo cerca.</p>';
+    return;
+  }
+
+  const defaultQty = Number((activeBomRow && activeBomRow.qty_required) || 0);
+  const body = candidates.map((c, idx) =>
+    '<tr>' +
+      '<td><input type="checkbox" class="match-check" data-item-id="' + Number(c.item_id) + '" /></td>' +
+      '<td class="mono">' + htmlEscape(c.sku) + '</td>' +
+      '<td>' + htmlEscape(c.description) + '</td>' +
+      '<td>' + htmlEscape(c.family || "") + '</td>' +
+      '<td>' + htmlEscape(c.subfamily || "") + '</td>' +
+      '<td>' + htmlEscape(c.dimension_1 || "") + '</td>' +
+      '<td>' + htmlEscape(c.dimension_2 || "") + '</td>' +
+      '<td>' + htmlEscape(c.dimension_match ? "SI" : "NO") + '</td>' +
+      '<td>' + htmlEscape(c.lot || "") + '</td>' +
+      '<td>' + htmlEscape(c.uom || "") + '</td>' +
+      '<td style="text-align:right"><b>' + Number(c.qty_onhand || 0) + '</b></td>' +
+      '<td><input class="match-qty" data-item-id="' + Number(c.item_id) + '" type="number" step="0.01" min="0" value="' + (idx === 0 ? defaultQty : 0) + '" style="width:90px" /></td>' +
+    '</tr>'
+  ).join("");
+
+  document.getElementById("matchCandidates").innerHTML =
+    '<div class="row" style="margin-bottom:10px"><button class="btn ok" type="button" onclick="confirmSelectedMatches()">Conferma selezionati</button></div>' +
+    '<table>' +
+      '<thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia stock</th><th>Sottofamiglia</th><th>Dim.1</th><th>Dim.2</th><th>Dim. match</th><th>Lot</th><th>U.M.</th><th>Giacenza</th><th>Qty</th></tr></thead>' +
+      '<tbody>' + body + '</tbody>' +
+    '</table>';
+}
+
+function closeMatchModal() {
+  if (!dialog) return;
+  dialog.classList.remove("force-open");
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest(".js-open-match");
+  if (!btn) return;
+  event.preventDefault();
+  const rowId = Number(btn.dataset.rowId || 0);
+  if (!Number.isFinite(rowId) || rowId <= 0) {
+    alert("ID riga BOM non valido");
+    return;
+  }
+  openMatchModal(rowId);
+});
+
+</script>
 </body>
 </html>`);
 });
+
+app.get("/api/stock/manual-search", requireAuth, async (req, res) => {
+  try {
+    const search = String(req.query.q || "").trim();
+    const items = await searchStockItemsForManual({ search, limit: 300 });
+    return res.json({ ok: true, items });
+  } catch (error) {
+    console.error("/api/stock/manual-search error", error);
+    return res.status(500).json({ ok: false, error: error.message || "Errore ricerca stock" });
+  }
+});
+
+app.post("/api/bom/:equipment/manual-items", requireAuth, async (req, res) => {
+  const equipment = String(req.params.equipment || "").trim();
+  try {
+    const result = await addManualItemsToBom({
+      equipment,
+      items: Array.isArray(req.body?.items) ? req.body.items : [],
+    });
+    return res.json({ ok: true, result });
+  } catch (error) {
+    console.error("/api/bom manual-items error", error);
+    return res.status(500).json({ ok: false, error: error.message || "Errore aggiunta manuale" });
+  }
+});
+
+app.post("/api/bom-row/:rowId/multi-match", requireAuth, async (req, res) => {
+  const rowId = Number(req.params.rowId);
+  const selected = (Array.isArray(req.body?.items) ? req.body.items : [])
+    .map((x) => ({ item_id: Number(x.item_id), qty_required: Number(x.qty_required || 0) }))
+    .filter((x) => Number.isFinite(x.item_id) && x.item_id > 0 && Number.isFinite(x.qty_required) && x.qty_required > 0);
+
+  if (!Number.isFinite(rowId) || rowId <= 0 || selected.length === 0) {
+    return res.status(400).json({ ok: false, error: "Selezione non valida" });
+  }
+
+  try {
+    await matchBomRowToMultipleItems({ bomRowId: rowId, items: selected });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("/api/bom-row multi-match error", error);
+    return res.status(500).json({ ok: false, error: error.message || "Errore multi match" });
+  }
+});
+
 app.get("/labels", requireAuth, async (req, res) => {
   const items = await listItems();
   const baseUrl = getBaseUrl(req);
