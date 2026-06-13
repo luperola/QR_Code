@@ -279,8 +279,26 @@ function parseItemsFromWorksheet(workbook) {
 
   return rows.map((row) => {
     const family = String(getValue(row, "Famiglia", "Family")).trim();
-    const dimension_1 = String(getValue(row, "Dimensione_1", "Dimensione 1", "Dimension 1", "OD", "Diametro")).trim();
-    const dimension_2 = String(getValue(row, "Dimensione_2", "Dimensione 2", "Dimension 2", "OD2", "Diametro 2")).trim();
+    const dimension_1 = String(
+      getValue(
+        row,
+        "Dimensione_1",
+        "Dimensione 1",
+        "Dimension 1",
+        "OD",
+        "Diametro",
+      ),
+    ).trim();
+    const dimension_2 = String(
+      getValue(
+        row,
+        "Dimensione_2",
+        "Dimensione 2",
+        "Dimension 2",
+        "OD2",
+        "Diametro 2",
+      ),
+    ).trim();
     const subfamily = String(
       getValue(row, "Sottofamiglia", "Sotto famiglia", "Subfamily"),
     ).trim();
@@ -1017,8 +1035,12 @@ const handleBomImport = async (req, res) => {
   const headerRowIndex = matrix.findIndex((row) => {
     const normalized = row.map(norm);
     const joined = normalized.join("|");
-    const hasDiameter = normalized.some((h) => h === "diameter" || h.includes("diameter"));
-    const hasFamily = normalized.some((h) => h === "family" || h === "famiglia");
+    const hasDiameter = normalized.some(
+      (h) => h === "diameter" || h.includes("diameter"),
+    );
+    const hasFamily = normalized.some(
+      (h) => h === "family" || h === "famiglia",
+    );
     const hasQuantity =
       normalized.some((h) => h === "quantity dima") ||
       normalized.some((h) => h === "quantity supplier") ||
@@ -1060,7 +1082,14 @@ const handleBomImport = async (req, res) => {
     brand: col("BRAND"),
     characteristics: col("CHARACTERISTICS"),
     diameter: col("DIAMETER"),
-    qtySupplier: col("Quantity DIMA", "Quantity Supplier", "Quantity", "Qty", "Q.ty", "Qta"),
+    qtySupplier: col(
+      "Quantity DIMA",
+      "Quantity Supplier",
+      "Quantity",
+      "Qty",
+      "Q.ty",
+      "Qta",
+    ),
     unit: col("unit", "uom", "um", "u.m."),
     note: col("Note"),
     family: col("Family", "Famiglia"),
@@ -1069,7 +1098,9 @@ const handleBomImport = async (req, res) => {
   if (idx.qtySupplier < 0 || idx.family < 0 || idx.diameter < 0) {
     return res
       .status(400)
-      .send("Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier.");
+      .send(
+        "Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier.",
+      );
   }
 
   const numberValue = (value) => {
@@ -1145,20 +1176,32 @@ app.post("/bom/:equipment/delete", requireAuth, async (req, res) => {
   return res.redirect("/bom");
 });
 
-
 app.get("/api/bom-row/:rowId/candidates", requireAuth, async (req, res) => {
   const rowId = Number(req.params.rowId);
-  if (!Number.isFinite(rowId)) return res.status(400).json({ error: "Invalid row id" });
+  if (!Number.isFinite(rowId))
+    return res.status(400).json({ error: "Invalid row id" });
 
   const row = await getBomRowById(rowId);
   if (!row) return res.status(404).json({ error: "Riga BOM non trovata" });
 
-  const family = String(row.source_family || "").trim().toUpperCase();
-  const familyTokens = family.split(/[;,/|+\s]+/).map((v) => v.trim()).filter(Boolean);
-  const needsSubfamilyChoice = familyTokens.some((f) =>
-    f.startsWith("FIT") || f.startsWith("RED") || f.startsWith("REG") || f.startsWith("VAL") || f.startsWith("MAN")
+  const family = String(row.source_family || "")
+    .trim()
+    .toUpperCase();
+  const familyTokens = family
+    .split(/[;,/|+\s]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const needsSubfamilyChoice = familyTokens.some(
+    (f) =>
+      f.startsWith("FIT") ||
+      f.startsWith("RED") ||
+      f.startsWith("REG") ||
+      f.startsWith("VAL") ||
+      f.startsWith("MAN"),
   );
-  const selectedSubfamilies = String(req.query.subfamilies || req.query.subfamily || "")
+  const selectedSubfamilies = String(
+    req.query.subfamilies || req.query.subfamily || "",
+  )
     .split("||")
     .map((v) => v.trim())
     .filter(Boolean);
@@ -1175,7 +1218,9 @@ app.get("/api/bom-row/:rowId/candidates", requireAuth, async (req, res) => {
   };
 
   if (needsSubfamilyChoice && selectedSubfamilies.length === 0 && !search) {
-    const subfamilies = await listBomSubfamiliesForFamily({ family: row.source_family });
+    const subfamilies = await listBomSubfamiliesForFamily({
+      family: row.source_family,
+    });
     return res.json({
       row: baseRow,
       mode: "SUBFAMILY_SELECT",
@@ -1208,7 +1253,11 @@ app.post("/api/bom-row/:rowId/match", requireAuth, async (req, res) => {
   }
 
   try {
-    const result = await matchBomRowToItem({ bomRowId: rowId, itemId, appendWhenAlreadyMatched: true });
+    const result = await matchBomRowToItem({
+      bomRowId: rowId,
+      itemId,
+      appendWhenAlreadyMatched: true,
+    });
     return res.json({ ok: true, result });
   } catch (error) {
     console.error("/api/bom-row match error", error);
@@ -1231,13 +1280,14 @@ app.post("/api/bom-row/:rowId/to-buy", requireAuth, async (req, res) => {
   }
 });
 
-
 app.post("/bom/:equipment/finalize", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   try {
     const result = await finalizeBom(equipment);
     if (!result.ok) {
-      return res.redirect(`/bom/${encodeURIComponent(equipment)}?pending=${result.pending}`);
+      return res.redirect(
+        `/bom/${encodeURIComponent(equipment)}?pending=${result.pending}`,
+      );
     }
     return res.redirect(`/bom/${encodeURIComponent(equipment)}?finalized=1`);
   } catch (error) {
@@ -1246,11 +1296,11 @@ app.post("/bom/:equipment/finalize", requireAuth, async (req, res) => {
   }
 });
 
-
 app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const rowId = Number(req.params.rowId);
-  if (!Number.isFinite(rowId) || rowId <= 0) return res.status(400).send("Riga BOM non valida");
+  if (!Number.isFinite(rowId) || rowId <= 0)
+    return res.status(400).send("Riga BOM non valida");
 
   const row = await getBomRowById(rowId);
   if (!row) return res.status(404).send("Riga BOM non trovata");
@@ -1261,28 +1311,47 @@ app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
     .map((v) => String(v || "").trim())
     .filter(Boolean);
   const search = String(req.query.search || "").trim();
-  const family = String(row.source_family || "").trim().toUpperCase();
-  const familyTokens = family.split(/[;,/|+\s]+/).map((v) => v.trim()).filter(Boolean);
-  const needsSubfamilyChoice = familyTokens.some((f) =>
-    f.startsWith("FIT") || f.startsWith("RED") || f.startsWith("REG") || f.startsWith("VAL") || f.startsWith("MAN")
+  const family = String(row.source_family || "")
+    .trim()
+    .toUpperCase();
+  const familyTokens = family
+    .split(/[;,/|+\s]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const needsSubfamilyChoice = familyTokens.some(
+    (f) =>
+      f.startsWith("FIT") ||
+      f.startsWith("RED") ||
+      f.startsWith("REG") ||
+      f.startsWith("VAL") ||
+      f.startsWith("MAN"),
   );
 
-  const subfamilies = needsSubfamilyChoice ? await listBomSubfamiliesForFamily({ family: row.source_family }) : [];
-  const candidates = (!needsSubfamilyChoice || selectedSubfamilies.length || search)
-    ? await listItemsByFamilyForBom({
-        family: row.source_family,
-        dimension: row.source_dimension,
-        subfamilies: selectedSubfamilies,
-        search,
-      })
+  const subfamilies = needsSubfamilyChoice
+    ? await listBomSubfamiliesForFamily({ family: row.source_family })
     : [];
+  const candidates =
+    !needsSubfamilyChoice || selectedSubfamilies.length || search
+      ? await listItemsByFamilyForBom({
+          family: row.source_family,
+          dimension: row.source_dimension,
+          subfamilies: selectedSubfamilies,
+          search,
+        })
+      : [];
 
-  const subfamilyChoices = subfamilies.map((sf) => {
-    const checked = selectedSubfamilies.includes(sf.subfamily) ? "checked" : "";
-    return `<label class="subfamily-choice"><input type="checkbox" name="subfamily" value="${escapeHtml(sf.subfamily)}" ${checked}> <span><b>${escapeHtml(sf.subfamily)}</b> (${Number(sf.items_count || 0)} items)${sf.families ? `<br><small>${escapeHtml(sf.families)}</small>` : ""}</span></label>`;
-  }).join("");
+  const subfamilyChoices = subfamilies
+    .map((sf) => {
+      const checked = selectedSubfamilies.includes(sf.subfamily)
+        ? "checked"
+        : "";
+      return `<label class="subfamily-choice"><input type="checkbox" name="subfamily" value="${escapeHtml(sf.subfamily)}" ${checked}> <span><b>${escapeHtml(sf.subfamily)}</b> (${Number(sf.items_count || 0)} items)${sf.families ? `<br><small>${escapeHtml(sf.families)}</small>` : ""}</span></label>`;
+    })
+    .join("");
 
-  const candidateRows = candidates.map((c, idx) => `
+  const candidateRows = candidates
+    .map(
+      (c, idx) => `
     <tr>
       <td><input type="checkbox" name="item_id" value="${Number(c.item_id)}"></td>
       <td class="mono">${escapeHtml(c.sku)}</td>
@@ -1295,7 +1364,9 @@ app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
       <td>${escapeHtml(c.uom || "")}</td>
       <td style="text-align:right"><b>${Number(c.qty_onhand || 0)}</b></td>
       <td><input name="qty_${Number(c.item_id)}" type="number" step="0.01" min="0" value="${idx === 0 ? Number(row.qty_required || 0) : 0}" style="width:90px"></td>
-    </tr>`).join("");
+    </tr>`,
+    )
+    .join("");
 
   res.send(`<!doctype html>
 <html lang="it">
@@ -1371,9 +1442,14 @@ app.post("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
   const rowId = Number(req.params.rowId);
   const itemId = Number(req.body?.item_id);
-  if (!Number.isFinite(rowId) || !Number.isFinite(itemId)) return res.status(400).send("Riga BOM o item non valido");
+  if (!Number.isFinite(rowId) || !Number.isFinite(itemId))
+    return res.status(400).send("Riga BOM o item non valido");
   try {
-    await matchBomRowToItem({ bomRowId: rowId, itemId, appendWhenAlreadyMatched: true });
+    await matchBomRowToItem({
+      bomRowId: rowId,
+      itemId,
+      appendWhenAlreadyMatched: true,
+    });
     return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
   } catch (error) {
     console.error("POST match page error", error);
@@ -1381,49 +1457,78 @@ app.post("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
   }
 });
 
+app.post(
+  "/bom/:equipment/match/:rowId/to-buy",
+  requireAuth,
+  async (req, res) => {
+    const equipment = String(req.params.equipment || "");
+    const rowId = Number(req.params.rowId);
+    const qtyToBuy = Number(
+      String(req.body?.qty_to_buy || "0").replace(",", "."),
+    );
+    if (!Number.isFinite(rowId) || rowId <= 0)
+      return res.status(400).send("Riga BOM non valida");
+    try {
+      await markBomRowToBuy({
+        bomRowId: rowId,
+        qtyToBuy:
+          Number.isFinite(qtyToBuy) && qtyToBuy > 0 ? qtyToBuy : undefined,
+      });
+      return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
+    } catch (error) {
+      console.error("POST match to-buy page error", error);
+      return res.status(500).send(error.message || "Errore durante TO BUY");
+    }
+  },
+);
 
-app.post("/bom/:equipment/match/:rowId/to-buy", requireAuth, async (req, res) => {
-  const equipment = String(req.params.equipment || "");
-  const rowId = Number(req.params.rowId);
-  const qtyToBuy = Number(String(req.body?.qty_to_buy || "0").replace(",", "."));
-  if (!Number.isFinite(rowId) || rowId <= 0) return res.status(400).send("Riga BOM non valida");
-  try {
-    await markBomRowToBuy({ bomRowId: rowId, qtyToBuy: Number.isFinite(qtyToBuy) && qtyToBuy > 0 ? qtyToBuy : undefined });
-    return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
-  } catch (error) {
-    console.error("POST match to-buy page error", error);
-    return res.status(500).send(error.message || "Errore durante TO BUY");
-  }
-});
+app.post(
+  "/bom/:equipment/match/:rowId/multi",
+  requireAuth,
+  async (req, res) => {
+    const equipment = String(req.params.equipment || "");
+    const rowId = Number(req.params.rowId);
+    const rawIds = Array.isArray(req.body?.item_id)
+      ? req.body.item_id
+      : req.body?.item_id
+        ? [req.body.item_id]
+        : [];
 
-app.post("/bom/:equipment/match/:rowId/multi", requireAuth, async (req, res) => {
-  const equipment = String(req.params.equipment || "");
-  const rowId = Number(req.params.rowId);
-  const rawIds = Array.isArray(req.body?.item_id)
-    ? req.body.item_id
-    : (req.body?.item_id ? [req.body.item_id] : []);
+    const items = rawIds
+      .map((id) => {
+        const itemId = Number(id);
+        const qty = Number(
+          String(req.body?.[`qty_${itemId}`] || "0").replace(",", "."),
+        );
+        return { item_id: itemId, qty_required: qty };
+      })
+      .filter(
+        (x) =>
+          Number.isFinite(x.item_id) &&
+          x.item_id > 0 &&
+          Number.isFinite(x.qty_required) &&
+          x.qty_required > 0,
+      );
 
-  const items = rawIds
-    .map((id) => {
-      const itemId = Number(id);
-      const qty = Number(String(req.body?.[`qty_${itemId}`] || "0").replace(",", "."));
-      return { item_id: itemId, qty_required: qty };
-    })
-    .filter((x) => Number.isFinite(x.item_id) && x.item_id > 0 && Number.isFinite(x.qty_required) && x.qty_required > 0);
+    if (!Number.isFinite(rowId) || rowId <= 0 || items.length === 0) {
+      return res
+        .status(400)
+        .send(
+          "Seleziona almeno un item e indica una quantità maggiore di zero.",
+        );
+    }
 
-  if (!Number.isFinite(rowId) || rowId <= 0 || items.length === 0) {
-    return res.status(400).send("Seleziona almeno un item e indica una quantità maggiore di zero.");
-  }
-
-  try {
-    await matchBomRowToMultipleItems({ bomRowId: rowId, items });
-    return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
-  } catch (error) {
-    console.error("POST multi match page error", error);
-    return res.status(500).send(error.message || "Errore durante il multi match");
-  }
-});
-
+    try {
+      await matchBomRowToMultipleItems({ bomRowId: rowId, items });
+      return res.redirect(`/bom/${encodeURIComponent(equipment)}`);
+    } catch (error) {
+      console.error("POST multi match page error", error);
+      return res
+        .status(500)
+        .send(error.message || "Errore durante il multi match");
+    }
+  },
+);
 
 app.get("/bom/:equipment", requireAuth, async (req, res) => {
   const equipment = String(req.params.equipment || "");
@@ -1436,24 +1541,29 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
     Number.isInteger(imported) && Number.isInteger(skipped)
       ? `<div class="flash ok">Import BOM completato. Righe valide=${imported}, righe ignorate=${skipped}. Ora scegli gli item stock per ogni riga TO_MATCH.</div>`
       : "";
-  const finalizedMessage = String(req.query.finalized || "") === "1"
-    ? `<div class="flash ok">BOM terminato e congelato.</div>`
-    : "";
+  const finalizedMessage =
+    String(req.query.finalized || "") === "1"
+      ? `<div class="flash ok">BOM terminato e congelato.</div>`
+      : "";
   const pendingFinalize = Number.parseInt(String(req.query.pending || ""), 10);
   const finalizeError = Number.isInteger(pendingFinalize)
     ? `<div class="flash error">Non posso terminare il BOM: restano ${pendingFinalize} righe TO_MATCH da scegliere.</div>`
     : "";
-  const statusBadge = bom.status === "FINALIZED"
-    ? `<span class="badge ok">FINALIZED</span>`
-    : `<span class="badge">DRAFT</span>`;
+  const statusBadge =
+    bom.status === "FINALIZED"
+      ? `<span class="badge ok">FINALIZED</span>`
+      : `<span class="badge">DRAFT</span>`;
 
   const rows = bom.rows
     .map((r) => {
-      const isPending = String(r.sku || "").startsWith("__PENDING__") || r.availability === "TO_MATCH";
+      const isPending =
+        String(r.sku || "").startsWith("__PENDING__") ||
+        r.availability === "TO_MATCH";
       const skuLabel = isPending ? "DA SCEGLIERE" : r.sku;
-      const chooseButton = Number(r.qty_required || 0) > 0
-        ? `<a class="btn secondary js-open-match" href="/bom/${encodeURIComponent(bom.equipment)}/match/${Number(r.id)}" data-row-id="${Number(r.id)}">Scegli da stock</a>`
-        : "";
+      const chooseButton =
+        Number(r.qty_required || 0) > 0
+          ? `<a class="btn secondary js-open-match" href="/bom/${encodeURIComponent(bom.equipment)}/match/${Number(r.id)}" data-row-id="${Number(r.id)}">Scegli da stock</a>`
+          : "";
       const button = `<div class="row action-buttons">${chooseButton}</div>`;
       return `
     <tr class="${isPending ? "needs-match" : ""}">
@@ -1807,7 +1917,9 @@ app.get("/api/stock/manual-search", requireAuth, async (req, res) => {
     return res.json({ ok: true, items });
   } catch (error) {
     console.error("/api/stock/manual-search error", error);
-    return res.status(500).json({ ok: false, error: error.message || "Errore ricerca stock" });
+    return res
+      .status(500)
+      .json({ ok: false, error: error.message || "Errore ricerca stock" });
   }
 });
 
@@ -1821,15 +1933,26 @@ app.post("/api/bom/:equipment/manual-items", requireAuth, async (req, res) => {
     return res.json({ ok: true, result });
   } catch (error) {
     console.error("/api/bom manual-items error", error);
-    return res.status(500).json({ ok: false, error: error.message || "Errore aggiunta manuale" });
+    return res
+      .status(500)
+      .json({ ok: false, error: error.message || "Errore aggiunta manuale" });
   }
 });
 
 app.post("/api/bom-row/:rowId/multi-match", requireAuth, async (req, res) => {
   const rowId = Number(req.params.rowId);
   const selected = (Array.isArray(req.body?.items) ? req.body.items : [])
-    .map((x) => ({ item_id: Number(x.item_id), qty_required: Number(x.qty_required || 0) }))
-    .filter((x) => Number.isFinite(x.item_id) && x.item_id > 0 && Number.isFinite(x.qty_required) && x.qty_required > 0);
+    .map((x) => ({
+      item_id: Number(x.item_id),
+      qty_required: Number(x.qty_required || 0),
+    }))
+    .filter(
+      (x) =>
+        Number.isFinite(x.item_id) &&
+        x.item_id > 0 &&
+        Number.isFinite(x.qty_required) &&
+        x.qty_required > 0,
+    );
 
   if (!Number.isFinite(rowId) || rowId <= 0 || selected.length === 0) {
     return res.status(400).json({ ok: false, error: "Selezione non valida" });
@@ -1840,7 +1963,9 @@ app.post("/api/bom-row/:rowId/multi-match", requireAuth, async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     console.error("/api/bom-row multi-match error", error);
-    return res.status(500).json({ ok: false, error: error.message || "Errore multi match" });
+    return res
+      .status(500)
+      .json({ ok: false, error: error.message || "Errore multi match" });
   }
 });
 
@@ -2600,20 +2725,33 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
 app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Items");
+
   ws.columns = [
-    { header: "SKU", key: "sku", width: 18 },
-    { header: "Description", key: "description", width: 42 },
-    { header: "Lot", key: "lot", width: 18 },
-    { header: "EntryDate", key: "entry_date", width: 14 },
+    { header: "SKU Tecnico", key: "sku", width: 22 },
+    { header: "Descrizione", key: "description", width: 42 },
+    { header: "Famiglia", key: "family", width: 18 },
+    { header: "Sottofamiglia", key: "subfamily", width: 22 },
+    { header: "Nr Linde", key: "lot", width: 18 },
+    { header: "Giacenza", key: "initial_qty", width: 14 },
+    { header: "u.m.", key: "uom", width: 10 },
+    { header: "Valore", key: "value_amount", width: 14 },
+    { header: "Costo Unitario", key: "unit_cost", width: 18 },
   ];
+
   ws.addRow({
     sku: "DKW-12345",
     description: "Esempio descrizione",
-    lot: "LOT-001",
-    entry_date: "2026-02-23",
+    family: "TUBE",
+    subfamily: "ULTRON",
+    lot: "LINDE-001",
+    initial_qty: 10,
+    uom: "PC",
+    value_amount: 100,
+    unit_cost: 10,
   });
+
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:D1";
+  ws.autoFilter = "A1:I1";
 
   res.setHeader(
     "Content-Type",
