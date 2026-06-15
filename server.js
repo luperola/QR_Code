@@ -342,7 +342,9 @@ function parseItemsFromWorksheet(workbook) {
       getValue(row, "Description", "Descrizione"),
     ).trim();
     const lot = String(getValue(row, "Lot", "LOT", "Nr Linde")).trim();
-    const lotFallback = String(getValue(row, "ID interno", "ID", "Nr.", "Nr")).trim();
+    const lotFallback = String(
+      getValue(row, "ID interno", "ID", "Nr.", "Nr"),
+    ).trim();
 
     const entryRaw = getValue(
       row,
