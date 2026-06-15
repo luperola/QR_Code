@@ -333,7 +333,7 @@ function parseItemsFromWorksheet(workbook) {
       ),
     ).trim();
     const subfamily = String(
-      getValue(row, "Sottofamiglia", "Sotto famiglia", "Subfamily"),
+      getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
     ).trim();
     const sku = String(
       getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU"),
@@ -342,7 +342,7 @@ function parseItemsFromWorksheet(workbook) {
       getValue(row, "Description", "Descrizione"),
     ).trim();
     const lot = String(getValue(row, "Lot", "LOT", "Nr Linde")).trim();
-    const lotFallback = String(getValue(row, "Nr.", "Nr")).trim();
+    const lotFallback = String(getValue(row, "ID interno", "ID", "Nr.", "Nr")).trim();
 
     const entryRaw = getValue(
       row,
@@ -400,7 +400,7 @@ function parseItemsFromWorksheet(workbook) {
       description,
       family,
       subfamily,
-      lot: lot || lotFallback,
+      lot: lot || (lotFallback ? `ID-${lotFallback}` : "DEFAULT"),
       entry_date,
       uom,
       initial_qty: Number.isFinite(initial_qty) ? initial_qty : 0,
@@ -672,11 +672,10 @@ app.get("/items", requireAuth, async (req, res) => {
       <tr data-family="${escapeHtml(it.family || "")}" data-subfamily="${escapeHtml(it.subfamily || "")}">
       <td>${escapeHtml(it.sku)}</td>
       <td>${escapeHtml(it.description)}</td>
-      <td>${escapeHtml(it.subfamily || "")}</td>  
+      <td>${escapeHtml(it.family || "")}</td>
+      <td>${escapeHtml(it.subfamily || "")}</td>
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(it.uom || "")}</td>
-      <td style="text-align:right">${formatEuro(it.value_amount)}</td>
-      <td style="text-align:right">${formatEuro(it.unit_cost)}</td>
       <td>
         ${
           canDeleteItems
@@ -725,7 +724,7 @@ ${clearMessage}
   </div>
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
-    <p class="muted">Header supportati: <span class="mono">SKU Tecnico, Descrizione, Famiglia, Sottofamiglia, Nr Linde, Giacenza, u.m., Valore, Costo Unitario</span>.</p>
+    <p class="muted">Header supportati: <span class="mono">SKU, Descrizione, Famiglia, Serie, Giacenza, u.m.</span> (dal template originale: S, B, C, D, O, P).</p>
     <form method="post" action="/items/import" enctype="multipart/form-data">
       <input type="file" name="file" accept=".xlsx,.xls" required />
       <div class="row">
@@ -745,7 +744,7 @@ ${clearMessage}
   <div class="pad">
       <label for="familyFilter">Filtra</label>
       <select id="familyFilter">
-        <option value="">Tutte le sottofamiglie</option>
+        <option value="">Tutte le serie</option>
         ${Array.from(
           new Set(
             items
@@ -763,9 +762,9 @@ ${clearMessage}
     </div>
     <div class="table-wrap">
       <table id="itemsTable">
-        <thead><tr><th>SKU Tecnico</th><th>Descrizione</th><th>Sottofamiglia</th><th>Giacenza</th><th>u.m.</th><th>Valore</th><th>Costo Unitario</th><th>Elimina</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Serie</th><th>Giacenza</th><th>u.m.</th><th>Elimina</th></tr></thead>
         <tbody id="itemsTableBody">
-            ${rows || `<tr><td colspan="8" class="muted">Nessun item.</td></tr>`}
+            ${rows || `<tr><td colspan="7" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2751,38 +2750,8 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
 });
 
 app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("Items");
-
-  ws.columns = [
-    { header: "SKU Tecnico", key: "sku", width: 22 },
-    { header: "Descrizione", key: "description", width: 42 },
-    { header: "Famiglia", key: "family", width: 18 },
-    { header: "Sottofamiglia", key: "subfamily", width: 22 },
-    { header: "Nr Linde", key: "lot", width: 18 },
-    { header: "Giacenza", key: "initial_qty", width: 14 },
-    { header: "u.m.", key: "uom", width: 10 },
-    { header: "Valore", key: "value_amount", width: 14 },
-    { header: "Costo Unitario", key: "unit_cost", width: 18 },
-  ];
-
-  ws.addRow({
-    sku: "DKW-12345",
-    description: "Esempio descrizione",
-    family: "TUBE",
-    subfamily: "ULTRON",
-    lot: "LINDE-001",
-    initial_qty: 10,
-    uom: "PC",
-    value_amount: 100,
-    unit_cost: 10,
-  });
-
-  ws.getColumn("value_amount").numFmt = "€ #,##0.00";
-  ws.getColumn("unit_cost").numFmt = "€ #,##0.00";
-
-  ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:I1";
+  const templatePath = path.join(__dirname, "Template_ORIGINAL.xlsx");
+  const fileBuffer = await readFile(templatePath);
 
   res.setHeader(
     "Content-Type",
@@ -2790,10 +2759,9 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
   );
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="items-template.xlsx"`,
+    `attachment; filename="Template_ORIGINAL.xlsx"`,
   );
-  await wb.xlsx.write(res);
-  res.end();
+  res.send(fileBuffer);
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));

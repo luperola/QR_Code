@@ -200,6 +200,39 @@ function normalizeHeader(s) {
     .replace(/\s+/g, " ");
 }
 
+function roundExcel(value, decimals = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const factor = Math.pow(10, decimals);
+  // Arrotondamento come Excel ROUND/ARROTONDA: metà lontano dallo zero.
+  return (
+    (Math.sign(n) * Math.round(Math.abs(n) * factor + Number.EPSILON)) / factor
+  );
+}
+
+function parseEuroNumber(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const s = String(value)
+    .trim()
+    .replace(/€/g, "")
+    .replace(/\s+/g, "")
+    // elimina i punti solo quando sono separatori migliaia: 1.234,56
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".");
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatEuro(value) {
+  return `€ ${Number(value || 0).toLocaleString("it-IT", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function parseItemsFromWorksheet(workbook) {
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
@@ -351,10 +384,8 @@ function parseItemsFromWorksheet(workbook) {
         ? qtyRaw
         : Number(String(qtyRaw || "").replace(",", "."));
     const valueRaw = getValue(row, "Valore", "Value");
-    const value_amount =
-      typeof valueRaw === "number"
-        ? valueRaw
-        : Number(String(valueRaw || "").replace(",", "."));
+    const value_amount = roundExcel(parseEuroNumber(valueRaw), 2);
+
     const unitCostRaw = getValue(
       row,
       "Costo Unitario",
@@ -362,10 +393,7 @@ function parseItemsFromWorksheet(workbook) {
       "Cost Unit",
       "Unit Cost",
     );
-    const unit_cost =
-      typeof unitCostRaw === "number"
-        ? unitCostRaw
-        : Number(String(unitCostRaw || "").replace(",", "."));
+    const unit_cost = roundExcel(parseEuroNumber(unitCostRaw), 2);
 
     return {
       sku,
@@ -647,8 +675,8 @@ app.get("/items", requireAuth, async (req, res) => {
       <td>${escapeHtml(it.subfamily || "")}</td>  
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(it.uom || "")}</td>
-      <td style="text-align:right">${it.value_amount ?? 0}</td>
-      <td style="text-align:right">${it.unit_cost ?? 0}</td>
+      <td style="text-align:right">${formatEuro(it.value_amount)}</td>
+      <td style="text-align:right">${formatEuro(it.unit_cost)}</td>
       <td>
         ${
           canDeleteItems
@@ -792,8 +820,8 @@ app.post("/items", requireAuth, async (req, res) => {
     entry_date: entry_date ? String(entry_date).trim() : null,
     uom: (uom ? String(uom).trim() : "PC") || "PC",
     initial_qty: Number(initial_qty || 0),
-    value_amount: Number(value_amount || 0),
-    unit_cost: Number(unit_cost || 0),
+    value_amount: roundExcel(parseEuroNumber(value_amount), 2),
+    unit_cost: roundExcel(parseEuroNumber(unit_cost), 2),
   });
 
   res.redirect("/items");
@@ -2749,6 +2777,9 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
     value_amount: 100,
     unit_cost: 10,
   });
+
+  ws.getColumn("value_amount").numFmt = "€ #,##0.00";
+  ws.getColumn("unit_cost").numFmt = "€ #,##0.00";
 
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = "A1:I1";
