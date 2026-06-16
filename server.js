@@ -293,15 +293,19 @@ function buildSkuFromTemplateFields(fields = {}) {
   const parts = [familyCode];
   if (seriesCode) parts.push(seriesCode);
 
-  if (familyCode === "TB") {
-    if (seriesCode === "COAX") {
-      if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
-      else if (odExt) parts.push(odExt);
-      if (thickness) parts.push(thickness);
-      if (finishCode) parts.push(finishCode);
-      if (brandCode) parts.push(brandCode);
-      return parts.filter(Boolean).join("-");
-    }
+  const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(familyCode);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1"].includes(seriesCode);
+
+  if (isTubeLikeFamily && seriesCode === "COAX") {
+    if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
+    else if (odExt) parts.push(odExt);
+    if (thickness) parts.push(thickness);
+    if (finishCode) parts.push(finishCode);
+    if (brandCode) parts.push(brandCode);
+    return parts.filter(Boolean).join("-");
+  }
+
+  if (familyCode === "TB" || (isTubeLikeFamily && isStandardTubeSeries)) {
     if (odExt) parts.push(odExt);
     const odExtPlain = odExt.replace(/"/g, "");
     if ((odExtPlain === "1/2" || odExtPlain === "3/4") && thickness) {
@@ -980,15 +984,17 @@ function buildManualSku() {
   const thickness = String(data.get("thickness") || "").trim();
   const parts = [family];
   if (series) parts.push(series);
-  if (family === "TB") {
-    if (series === "COAX") {
-      if (odInt && odExt) parts.push(odInt + " x " + odExt);
-      else if (odExt) parts.push(odExt);
-      if (thickness) parts.push(thickness);
-      if (finish) parts.push(finish);
-      if (brand) parts.push(brand);
-      return parts.filter(Boolean).join("-");
-    }
+  const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(family);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1"].includes(series);
+  if (isTubeLikeFamily && series === "COAX") {
+    if (odInt && odExt) parts.push(odInt + " x " + odExt);
+    else if (odExt) parts.push(odExt);
+    if (thickness) parts.push(thickness);
+    if (finish) parts.push(finish);
+    if (brand) parts.push(brand);
+    return parts.filter(Boolean).join("-");
+  }
+  if (family === "TB" || (isTubeLikeFamily && isStandardTubeSeries)) {
     if (odExt) parts.push(odExt);
     const odPlain = odExt.replace(/"/g, "");
     if ((odPlain === "1/2" || odPlain === "3/4") && thickness) parts.push(thickness);
