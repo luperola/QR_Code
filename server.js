@@ -294,7 +294,7 @@ function buildSkuFromTemplateFields(fields = {}) {
   if (seriesCode) parts.push(seriesCode);
 
   const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(familyCode);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1"].includes(seriesCode);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1"].includes(seriesCode);
 
   if (isTubeLikeFamily && seriesCode === "COAX") {
     if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
@@ -985,7 +985,7 @@ function buildManualSku() {
   const parts = [family];
   if (series) parts.push(series);
   const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(family);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1"].includes(series);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1"].includes(series);
   if (isTubeLikeFamily && series === "COAX") {
     if (odInt && odExt) parts.push(odInt + " x " + odExt);
     else if (odExt) parts.push(odExt);
