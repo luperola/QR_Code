@@ -212,6 +212,123 @@ function textBeforeDash(value) {
   return parts[0].trim();
 }
 
+function codeBeforeDash(value) {
+  return textBeforeDash(value).trim();
+}
+
+function templateMenuOptions() {
+  const templatePath = path.join(__dirname, "Template_ORIGINAL.xlsx");
+  const workbook = XLSX.readFile(templatePath);
+  const sheet = workbook.Sheets.Liste_Menu;
+  if (!sheet) return {};
+
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const headers = rows[0] || [];
+  const optionColumn = (header) => {
+    const index = headers.findIndex((h) => String(h || "").trim() === header);
+    if (index < 0) return [];
+    return rows
+      .slice(1)
+      .map((row) => String(row[index] || "").trim())
+      .filter(Boolean);
+  };
+
+  return {
+    family: optionColumn("Famiglia - Menu"),
+    series: optionColumn("Serie - Menu"),
+    material: optionColumn("Materiale - Menu"),
+    config: optionColumn("Config - Menu"),
+    connection: optionColumn("Connessione - Menu"),
+    finish: optionColumn("Finitura - Menu"),
+    brand: optionColumn("Brand - Menu"),
+    uom: optionColumn("u.m. - Menu"),
+  };
+}
+
+function selectOptions(values = [], selected = "") {
+  return [`<option value="">-- Seleziona --</option>`]
+    .concat(
+      values.map((value) => {
+        const isSelected = String(value) === String(selected);
+        return `<option value="${escapeHtml(value)}" ${isSelected ? "selected" : ""}>${escapeHtml(value)}</option>`;
+      }),
+    )
+    .join("");
+}
+
+function buildSkuFromTemplateFields(fields = {}) {
+  const familyCode = codeBeforeDash(fields.family);
+  if (!familyCode) return "";
+
+  const seriesCode = codeBeforeDash(fields.series);
+  const materialCode = codeBeforeDash(fields.material);
+  const configCode = codeBeforeDash(fields.config);
+  const connectionCode = codeBeforeDash(fields.connection);
+  const finishCode = codeBeforeDash(fields.finish);
+  const brandCode = codeBeforeDash(fields.brand);
+  const model = String(fields.model || "").trim();
+  const odInt = String(fields.od_int || "").trim();
+  const odExt = String(fields.od_ext || "").trim();
+  const thickness = String(fields.thickness || "").trim();
+
+  const parts = [familyCode];
+  if (seriesCode) parts.push(seriesCode);
+
+  if (familyCode === "TB") {
+    if (odExt) parts.push(odExt);
+    const odExtPlain = odExt.replace(/"/g, "");
+    if ((odExtPlain === "1/2" || odExtPlain === "3/4") && thickness) {
+      parts.push(thickness);
+    }
+    if (finishCode) parts.push(finishCode);
+    if (brandCode) parts.push(brandCode);
+    return parts.filter(Boolean).join("-");
+  }
+
+  if (materialCode) parts.push(materialCode);
+  if (configCode) parts.push(configCode);
+  if (configCode === "CX") {
+    if (odInt && odExt) parts.push(`${odInt}/${odExt}`);
+  } else if (odExt) {
+    parts.push(odExt);
+  }
+  if (configCode !== "CX" && thickness) parts.push(thickness);
+  if (connectionCode) parts.push(connectionCode);
+  if (finishCode) parts.push(finishCode);
+  if (brandCode) parts.push(brandCode);
+  if (model) parts.push(model);
+
+  return parts.filter(Boolean).join("-");
+}
+
+function manualTemplateItemFromBody(body = {}) {
+  const family = String(body.family || "").trim();
+  const series = String(body.series || "").trim();
+  const uomRaw = String(body.uom || "").trim();
+  const initialQty = Number(String(body.initial_qty || "0").replace(",", "."));
+  const unitCost = roundExcel(parseEuroNumber(body.unit_cost), 2);
+  const valueAmountRaw = body.value_amount;
+  const calculatedValue = roundExcel((Number.isFinite(initialQty) ? initialQty : 0) * unitCost, 2);
+
+  return {
+    sku: buildSkuFromTemplateFields(body),
+    description: String(body.description || "").trim(),
+    family: textAfterDash(family),
+    subfamily: textAfterDash(series),
+    lot: "DEFAULT",
+    entry_date: null,
+    uom: codeBeforeDash(uomRaw) || "PC",
+    initial_qty: Number.isFinite(initialQty) ? initialQty : 0,
+    value_amount:
+      valueAmountRaw === undefined || valueAmountRaw === ""
+        ? calculatedValue
+        : roundExcel(parseEuroNumber(valueAmountRaw), 2),
+    unit_cost: unitCost,
+    dimension_1: String(body.od_ext || "").trim(),
+    dimension_2: String(body.thickness || "").trim(),
+  };
+}
+
 function roundExcel(value, decimals = 2) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -670,6 +787,14 @@ applyStockSearch();
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
   const canDeleteItems = req.user?.role === "admin";
+  const menus = templateMenuOptions();
+  const manualError = String(req.query.manual_error || "");
+  const manualCreated = String(req.query.manual_created || "");
+  const manualMessage = manualError
+    ? `<div class="flash err">${escapeHtml(manualError)}</div>`
+    : manualCreated
+      ? `<div class="flash ok">Item creato: <span class="mono">${escapeHtml(manualCreated)}</span>. QR disponibile in Stampa QR.</div>`
+      : "";
   const cleared = String(req.query.cleared || "") === "1";
   const clearMessage = cleared
     ? `<div class="flash ok">Stock e movimenti cancellati.</div>`
@@ -711,17 +836,32 @@ ${nav(req, "items")}
 
 <main class="container">
   <h1>Items</h1>
+${manualMessage}
 ${clearMessage}
 
   <div class="card pad">
-    <h2>Aggiungi / aggiorna item (SKU+Lot univoco)</h2>
-    <form method="post" action="/items">
+    <h2>Aggiungi item da template</h2>
+    <form id="manualItemForm" method="post" action="/items">
       <div class="form-grid">
-        <label>SKU<input name="sku" required placeholder="es. DKW-12345" /></label>
-        <label>Lot<input name="lot" required placeholder="es. LOT2026-01" /></label>
-               <label>U.M.<input name="uom" placeholder="PC" /></label>
-        <label>Quantità iniziale<input name="initial_qty" type="number" step="0.01" value="0" /></label>
-        <label class="span2">Descrizione<input name="description" required placeholder="es. Tubo 1.4435 EP 1/2&quot;..." /></label>
+        <label class="span2">Descrizione<input name="description" required placeholder="es. ULTRON TUBE EP 1/2&quot; (mm 12.7x1.24) cod. U-08" /></label>
+        <label>Famiglia<select name="family" required>${selectOptions(menus.family)}</select></label>
+        <label>Serie<select name="series">${selectOptions(menus.series)}</select></label>
+        <label>Materiale<select name="material">${selectOptions(menus.material)}</select></label>
+        <label>Config<select name="config">${selectOptions(menus.config)}</select></label>
+        <label>OD int (mm)<input name="od_int" placeholder="es. 1/4&quot;" /></label>
+        <label>OD est (mm)<input name="od_ext" placeholder="es. 1/2&quot;" /></label>
+        <label>Spessore<input name="thickness" placeholder="es. 1,24" /></label>
+        <label>Connessione<select name="connection">${selectOptions(menus.connection)}</select></label>
+        <label>Finitura<select name="finish">${selectOptions(menus.finish)}</select></label>
+        <label>Brand<select name="brand">${selectOptions(menus.brand)}</select></label>
+        <label>Modello<input name="model" /></label>
+        <label>Lunghezza (mm)<input name="length_mm" type="number" step="0.01" /></label>
+        <label>Giacenza<input name="initial_qty" type="number" step="0.01" value="0" /></label>
+        <label>u.m.<select name="uom">${selectOptions(menus.uom)}</select></label>
+        <label>Costo unitario<input name="unit_cost" type="number" step="0.01" value="0" /></label>
+        <label>Valore<input id="manualValuePreview" name="value_amount" readonly value="0" /></label>
+        <label class="span2">SKU generato<input id="manualSkuPreview" readonly /></label>
+        <label class="span2">Note<input name="note" /></label>
       </div>
       <div class="row">
         <button class="btn" type="submit">Salva</button>
@@ -785,6 +925,63 @@ document.getElementById("familyFilter")?.addEventListener("change", function () 
     row.style.display = !selectedSubfamily || rowSubfamily === selectedSubfamily ? "" : "none";
   });
 });
+
+const manualItemForm = document.getElementById("manualItemForm");
+const manualSkuPreview = document.getElementById("manualSkuPreview");
+const manualValuePreview = document.getElementById("manualValuePreview");
+function codePart(value) {
+  return String(value || "").split(/\s*[-–—]\s*/)[0].trim();
+}
+function buildManualSku() {
+  if (!manualItemForm) return "";
+  const data = new FormData(manualItemForm);
+  const family = codePart(data.get("family"));
+  if (!family) return "";
+  const series = codePart(data.get("series"));
+  const material = codePart(data.get("material"));
+  const config = codePart(data.get("config"));
+  const connection = codePart(data.get("connection"));
+  const finish = codePart(data.get("finish"));
+  const brand = codePart(data.get("brand"));
+  const model = String(data.get("model") || "").trim();
+  const odInt = String(data.get("od_int") || "").trim();
+  const odExt = String(data.get("od_ext") || "").trim();
+  const thickness = String(data.get("thickness") || "").trim();
+  const parts = [family];
+  if (series) parts.push(series);
+  if (family === "TB") {
+    if (odExt) parts.push(odExt);
+    const odPlain = odExt.replace(/"/g, "");
+    if ((odPlain === "1/2" || odPlain === "3/4") && thickness) parts.push(thickness);
+    if (finish) parts.push(finish);
+    if (brand) parts.push(brand);
+    return parts.filter(Boolean).join("-");
+  }
+  if (material) parts.push(material);
+  if (config) parts.push(config);
+  if (config === "CX") {
+    if (odInt && odExt) parts.push(odInt + "/" + odExt);
+  } else if (odExt) {
+    parts.push(odExt);
+  }
+  if (config !== "CX" && thickness) parts.push(thickness);
+  if (connection) parts.push(connection);
+  if (finish) parts.push(finish);
+  if (brand) parts.push(brand);
+  if (model) parts.push(model);
+  return parts.filter(Boolean).join("-");
+}
+function updateManualPreview() {
+  if (!manualItemForm) return;
+  if (manualSkuPreview) manualSkuPreview.value = buildManualSku();
+  const qty = Number(String(manualItemForm.elements.initial_qty?.value || "0").replace(",", "."));
+  const unitCost = Number(String(manualItemForm.elements.unit_cost?.value || "0").replace(",", "."));
+  const value = Number.isFinite(qty) && Number.isFinite(unitCost) ? qty * unitCost : 0;
+  if (manualValuePreview) manualValuePreview.value = value.toFixed(2);
+}
+manualItemForm?.addEventListener("input", updateManualPreview);
+manualItemForm?.addEventListener("change", updateManualPreview);
+updateManualPreview();
 </script>
 </body>
 </html>`);
@@ -800,36 +997,26 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
 });
 
 app.post("/items", requireAuth, async (req, res) => {
-  const {
-    sku,
-    description,
-    family,
-    subfamily,
-    lot,
-    entry_date,
-    uom,
-    initial_qty,
-    value_amount,
-    unit_cost,
-  } = req.body || {};
-  if (!sku || !description || !lot) {
-    return res.status(400).send("Missing fields");
+  const item = manualTemplateItemFromBody(req.body || {});
+  if (!item.sku || !item.description || !item.family) {
+    return res.redirect(
+      `/items?manual_error=${encodeURIComponent("Compila almeno descrizione, famiglia e i campi necessari per generare lo SKU.")}`,
+    );
   }
 
-  await upsertItem({
-    sku: String(sku).trim(),
-    description: String(description).trim(),
-    family: String(family).trim(),
-    subfamily: String(subfamily).trim(),
-    lot: String(lot).trim(),
-    entry_date: entry_date ? String(entry_date).trim() : null,
-    uom: (uom ? String(uom).trim() : "PC") || "PC",
-    initial_qty: Number(initial_qty || 0),
-    value_amount: roundExcel(parseEuroNumber(value_amount), 2),
-    unit_cost: roundExcel(parseEuroNumber(unit_cost), 2),
-  });
+  const existing = await db.query(
+    `SELECT sku, description FROM items WHERE sku=$1 LIMIT 1`,
+    [item.sku],
+  );
+  if (existing.rows[0]) {
+    return res.redirect(
+      `/items?manual_error=${encodeURIComponent(`Item equivalente gia presente nello stock: ${item.sku}`)}`,
+    );
+  }
 
-  res.redirect("/items");
+  await upsertItem(item);
+
+  res.redirect(`/items?manual_created=${encodeURIComponent(item.sku)}`);
 });
 
 app.post(
