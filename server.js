@@ -2079,57 +2079,14 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   const qtyOnHand = stockRows
     .filter((r) => r.sku === item.sku && r.lot === item.lot)
     .reduce((sum, r) => sum + Number(r.qty_onhand || 0), 0);
-  const reservations = await listStockReservations();
-  const reservationBySku = buildReservationViewBySku({
-    reservations,
-    stockRows,
-  });
-  const reservationsForSku = reservations
-    .filter((r) => String(r.sku || "").trim() === String(item.sku || "").trim())
-    .sort((a, b) =>
-      String(a.equipment || "").localeCompare(String(b.equipment || "")),
-    );
-
-  const reservationByEquipment = new Map(
-    reservationsForSku.map((r) => [
-      String(r.equipment || "")
-        .trim()
-        .toUpperCase(),
-      {
-        qty_required: Number(r.qty_required || 0),
-        uom: String(r.uom || "").trim() || "PC",
-      },
-    ]),
-  );
-
   const bomOptions = bomHeaders
     .map((h) => {
       const equipment = String(h.equipment || "")
         .trim()
         .toUpperCase();
-      const reservation = reservationByEquipment.get(equipment);
-      const reservedLabel = reservation
-        ? ` • richiesti ${reservation.qty_required} ${reservation.uom}`
-        : "";
-      return `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment + reservedLabel)}</option>`;
+      return `<option value="${escapeHtml(equipment)}">${escapeHtml(equipment)}</option>`;
     })
     .join("");
-  const reservationSummary = reservationsForSku.length
-    ? reservationsForSku
-        .map((r) => {
-          const uom = String(r.uom || "").trim() || "PC";
-          const qtyRequired = Number(r.qty_required || 0);
-          return `<li><span class="mono">${escapeHtml(r.equipment)}</span>: ${qtyRequired} ${escapeHtml(uom)}</li>`;
-        })
-        .concat(
-          reservationBySku.get(item.sku)?.warning
-            ? [
-                `<li><b>${escapeHtml(reservationBySku.get(item.sku).warning)}</b></li>`,
-              ]
-            : [],
-        )
-        .join("")
-    : `<li class="muted">Nessuna riserva BOM per SKU <span class="mono">${escapeHtml(item.sku)}</span>.</li>`;
   res.send(`<!doctype html>
 <html lang="it">
 <head>
@@ -2143,7 +2100,6 @@ app.get("/q/:id", requireAuth, async (req, res) => {
   <div class="card pad">
     <h1>Movimento stock</h1>
     <p class="muted">Operatore: <b>${escapeHtml(req.user.name)}</b></p>
-    <p class="muted">SKU <span class="mono">${escapeHtml(item.sku)}</span> • Lot <span class="mono">${escapeHtml(item.lot)}</span></p>
     <p><b>${escapeHtml(item.description)}</b></p>
 
     <form id="moveForm">
@@ -2163,16 +2119,12 @@ app.get("/q/:id", requireAuth, async (req, res) => {
         <label>Nuovo equipment/BOM
           <input name="new_equipment" placeholder="Es. LINEA-02" />
         </label>
-        <label>Quantità
+        <label>Quantit&agrave; in/out
           <input name="qty" type="number" min="0.01" step="0.01" value="1" required />
         </label>
         <label class="span2">Note (opzionale)
-          <input name="note" placeholder="es. carico da fornitore / scarico produzione..." />
+          <input name="note" />
         </label>
-      </div>
- <div class="card pad" style="margin-top:8px;">
-        <p class="muted" style="margin:0 0 6px 0;">Riservato per SKU <span class="mono">${escapeHtml(item.sku)}</span> (per scegliere meglio il BOM):</p>
-        <ul style="margin:0; padding-left:18px;">${reservationSummary}</ul>
       </div>
       <div class="row">
         <button class="btn ok" type="button" onclick="sendMove('IN')">IN</button>
@@ -2184,9 +2136,6 @@ app.get("/q/:id", requireAuth, async (req, res) => {
       <div id="msg" class="flash" style="margin-top:10px; display:none;"></div>
     </form>
 
-    <div class="hr"></div>
-     <p class="muted">Tip: salva questa pagina in Home. L'equipment viene ricordato sul telefono.</p>
-  <p class="muted">Se inserisci un nuovo equipment/BOM, verrà creato automaticamente anche nella pagina <span class="mono">/bom</span>.</p>
     </div>
 </main>
 
