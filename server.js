@@ -200,6 +200,18 @@ function normalizeHeader(s) {
     .replace(/\s+/g, " ");
 }
 
+function textAfterDash(value) {
+  const s = String(value || "").trim();
+  const parts = s.split(/\s*[-–—]\s*/);
+  return parts.length > 1 ? parts.slice(1).join(" - ").trim() : s;
+}
+
+function textBeforeDash(value) {
+  const s = String(value || "").trim();
+  const parts = s.split(/\s*[-–—]\s*/);
+  return parts[0].trim();
+}
+
 function roundExcel(value, decimals = 2) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -311,7 +323,7 @@ function parseItemsFromWorksheet(workbook) {
   };
 
   return rows.map((row) => {
-    const family = String(getValue(row, "Famiglia", "Family")).trim();
+    const family = textAfterDash(getValue(row, "Famiglia", "Family"));
     const dimension_1 = String(
       getValue(
         row,
@@ -332,9 +344,9 @@ function parseItemsFromWorksheet(workbook) {
         "Diametro 2",
       ),
     ).trim();
-    const subfamily = String(
+    const subfamily = textAfterDash(
       getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
-    ).trim();
+    );
     const sku = String(
       getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU"),
     ).trim();
@@ -368,7 +380,7 @@ function parseItemsFromWorksheet(workbook) {
       "Unita",
       "Unità",
     );
-    const uom = String(uomRaw || "").trim() || "PC";
+    const uom = textBeforeDash(uomRaw) || "PC";
 
     const qtyRaw = getValue(
       row,
