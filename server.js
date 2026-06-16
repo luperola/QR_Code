@@ -294,6 +294,14 @@ function buildSkuFromTemplateFields(fields = {}) {
   if (seriesCode) parts.push(seriesCode);
 
   if (familyCode === "TB") {
+    if (seriesCode === "COAX") {
+      if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
+      else if (odExt) parts.push(odExt);
+      if (thickness) parts.push(thickness);
+      if (finishCode) parts.push(finishCode);
+      if (brandCode) parts.push(brandCode);
+      return parts.filter(Boolean).join("-");
+    }
     if (odExt) parts.push(odExt);
     const odExtPlain = odExt.replace(/"/g, "");
     if ((odExtPlain === "1/2" || odExtPlain === "3/4") && thickness) {
@@ -973,6 +981,14 @@ function buildManualSku() {
   const parts = [family];
   if (series) parts.push(series);
   if (family === "TB") {
+    if (series === "COAX") {
+      if (odInt && odExt) parts.push(odInt + " x " + odExt);
+      else if (odExt) parts.push(odExt);
+      if (thickness) parts.push(thickness);
+      if (finish) parts.push(finish);
+      if (brand) parts.push(brand);
+      return parts.filter(Boolean).join("-");
+    }
     if (odExt) parts.push(odExt);
     const odPlain = odExt.replace(/"/g, "");
     if ((odPlain === "1/2" || odPlain === "3/4") && thickness) parts.push(thickness);
