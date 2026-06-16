@@ -854,9 +854,30 @@ app.get("/items", requireAuth, async (req, res) => {
 ${nav(req, "items")}
 
 <main class="container">
-  <h1>Items</h1>
+  <div class="items-topbar">
+    <div>
+      <h1>Items</h1>
 ${manualMessage}
 ${clearMessage}
+    </div>
+    <div class="card pad items-import-card">
+      <h2>Import items da Excel (.xlsx)</h2>
+      <form method="post" action="/items/import" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".xlsx,.xls" required />
+        <div class="row">
+          <button class="btn ok" type="submit">Importa</button>
+          <a class="btn secondary" href="/export/items-template.xlsx">Scarica template</a>
+        </div>
+      </form>
+      ${
+        canDeleteItems
+          ? `<form method="post" action="/items/reset-stock" onsubmit="return confirm('Confermi la cancellazione TEMPORANEA di stock, movimenti e BOM?');" style="margin-top:12px">
+              <button class="btn danger" type="submit">TEMPORARY: elimina stock + movimenti</button>
+            </form>`
+          : ""
+      }
+    </div>
+  </div>
 
   <div class="card pad">
     <h2>Aggiungi item da template</h2>
@@ -887,23 +908,6 @@ ${clearMessage}
         <a class="btn secondary" href="/labels">Stampa QR</a>
                </div>
     </form>
-  </div>
-  <div class="card pad">
-    <h2>Import items da Excel (.xlsx)</h2>
-    <form method="post" action="/items/import" enctype="multipart/form-data">
-      <input type="file" name="file" accept=".xlsx,.xls" required />
-      <div class="row">
-        <button class="btn ok" type="submit">Importa</button>
-                 <a class="btn secondary" href="/export/items-template.xlsx">Scarica template</a>
-      </div>
-    </form>
-    ${
-      canDeleteItems
-        ? `<form method="post" action="/items/reset-stock" onsubmit="return confirm('Confermi la cancellazione TEMPORANEA di stock, movimenti e BOM?');" style="margin-top:12px">
-            <button class="btn danger" type="submit">TEMPORARY: elimina stock + movimenti</button>
-          </form>`
-        : ""
-    }
   </div>
   <div class="card">
   <div class="pad">
