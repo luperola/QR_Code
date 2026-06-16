@@ -670,12 +670,6 @@ applyStockSearch();
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
   const canDeleteItems = req.user?.role === "admin";
-  const imported = Number.parseInt(String(req.query.imported || ""), 10);
-  const skipped = Number.parseInt(String(req.query.skipped || ""), 10);
-  const importMessage =
-    Number.isInteger(imported) && Number.isInteger(skipped)
-      ? `<div class="flash ok">Import completato. OK=${imported}, Skipped=${skipped}.</div>`
-      : "";
   const cleared = String(req.query.cleared || "") === "1";
   const clearMessage = cleared
     ? `<div class="flash ok">Stock e movimenti cancellati.</div>`
@@ -717,7 +711,6 @@ ${nav(req, "items")}
 
 <main class="container">
   <h1>Items</h1>
-${importMessage}
 ${clearMessage}
 
   <div class="card pad">
@@ -738,7 +731,6 @@ ${clearMessage}
   </div>
   <div class="card pad">
     <h2>Import items da Excel (.xlsx)</h2>
-    <p class="muted">Header supportati: <span class="mono">SKU, Descrizione, Famiglia, Serie, Giacenza, u.m.</span> (dal template originale: S, B, C, D, O, P).</p>
     <form method="post" action="/items/import" enctype="multipart/form-data">
       <input type="file" name="file" accept=".xlsx,.xls" required />
       <div class="row">
