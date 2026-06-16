@@ -301,20 +301,21 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   width: 50mm;
   height: 30mm;
   box-sizing: border-box;
-  padding: 1.5mm;
+  padding: 1mm 1.5mm;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 1mm;
+  justify-content: flex-start;
+  gap: 0.8mm;
   background: #fff;
 }
 
 .label .qr {
-  width: 21mm;
-  height: 21mm;
+  width: 18mm;
+  height: 18mm;
   box-sizing: border-box;
   padding: 0;
+  flex: 0 0 auto;
 }
 
 .label-text {
@@ -324,11 +325,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .sku {
   width: 47mm;
-  max-height: 6mm;
-  overflow: hidden;
+  min-height: 8mm;
+  max-height: 8mm;
+  overflow: visible;
   text-align: center;
-  font-size: 8pt;
-  line-height: 1.1;
+  font-size: 7.4pt;
+  line-height: 1.05;
   color: #000;
   font-weight: 700;
   white-space: normal;
