@@ -300,7 +300,9 @@ function buildSkuFromTemplateFields(fields = {}) {
     if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
     else if (odExt) parts.push(odExt);
     if (thickness) parts.push(thickness);
-    if (finishCode) parts.push(finishCode);
+    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(seriesCode) && finishCode) {
+      parts.push(finishCode);
+    }
     if (brandCode) parts.push(brandCode);
     return parts.filter(Boolean).join("-");
   }
@@ -311,7 +313,9 @@ function buildSkuFromTemplateFields(fields = {}) {
     if ((odExtPlain === "1/2" || odExtPlain === "3/4") && thickness) {
       parts.push(thickness);
     }
-    if (finishCode) parts.push(finishCode);
+    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(seriesCode) && finishCode) {
+      parts.push(finishCode);
+    }
     if (brandCode) parts.push(brandCode);
     return parts.filter(Boolean).join("-");
   }
@@ -892,14 +896,13 @@ ${clearMessage}
   </div>
 
   <div class="card pad">
-    <h2>Aggiungi item da template</h2>
+    <h2>Aggiungi item</h2>
     <form id="manualItemForm" method="post" action="/items">
       <div class="form-grid">
         <label class="span2">Descrizione<input name="description" required placeholder="es. ULTRON TUBE EP 1/2&quot; (mm 12.7x1.24) cod. U-08" /></label>
         <label>Famiglia<select name="family" required>${selectOptions(menus.family)}</select></label>
         <label>Serie<select name="series">${selectOptions(menus.series)}</select></label>
         <label>Materiale<select name="material">${selectOptions(menus.material)}</select></label>
-        <label>Config<select name="config">${selectOptions(menus.config)}</select></label>
         <label>OD int/min per coax/rid/tees in inches<input name="od_int" placeholder="es. 1/4&quot;" /></label>
         <label>OD est per tubi (in per SS, mm per plastica)<input name="od_ext" placeholder="es. 1/2&quot;" /></label>
         <label>Spessore<input name="thickness" placeholder="es. 1,24" /></label>
@@ -990,7 +993,7 @@ function buildManualSku() {
     if (odInt && odExt) parts.push(odInt + " x " + odExt);
     else if (odExt) parts.push(odExt);
     if (thickness) parts.push(thickness);
-    if (finish) parts.push(finish);
+    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(series) && finish) parts.push(finish);
     if (brand) parts.push(brand);
     return parts.filter(Boolean).join("-");
   }
@@ -998,7 +1001,7 @@ function buildManualSku() {
     if (odExt) parts.push(odExt);
     const odPlain = odExt.replace(/"/g, "");
     if ((odPlain === "1/2" || odPlain === "3/4") && thickness) parts.push(thickness);
-    if (finish) parts.push(finish);
+    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(series) && finish) parts.push(finish);
     if (brand) parts.push(brand);
     return parts.filter(Boolean).join("-");
   }
