@@ -213,13 +213,16 @@ textarea {
 
 .label {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 1px dashed rgba(255, 255, 255, 0.22);
   border-radius: 16px;
   padding: 12px;
   background: rgba(0, 0, 0, 0.18);
 }
-.qr {
+.label .qr {
   width: 168px;
   height: 168px;
   background: white;
@@ -298,16 +301,20 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   width: 50mm;
   height: 30mm;
   box-sizing: border-box;
-  padding: 2.5mm;
+  padding: 1.5mm;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 3 mm;
+  justify-content: center;
+  gap: 1mm;
   background: #fff;
 }
 
-.qr {
-  width: 30mm;
-  height: 30mm;
+.label .qr {
+  width: 21mm;
+  height: 21mm;
+  box-sizing: border-box;
+  padding: 0;
 }
 
 .label-text {
@@ -316,10 +323,16 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .sku {
-  font-size: 11pt;
+  width: 47mm;
+  max-height: 6mm;
+  overflow: hidden;
+  text-align: center;
+  font-size: 8pt;
   line-height: 1.1;
   color: #000;
   font-weight: 700;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .lot {
