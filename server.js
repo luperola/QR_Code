@@ -232,16 +232,35 @@ function templateMenuOptions() {
       .map((row) => String(row[index] || "").trim())
       .filter(Boolean);
   };
+  const menuFromCodeDescription = (codeHeader, descriptionHeader, menuHeader) => {
+    const codeIndex = headers.findIndex(
+      (h) => String(h || "").trim() === codeHeader,
+    );
+    const descriptionIndex = headers.findIndex(
+      (h) => String(h || "").trim() === descriptionHeader,
+    );
+    if (codeIndex < 0 || descriptionIndex < 0) return optionColumn(menuHeader);
+
+    return rows
+      .slice(1)
+      .map((row) => {
+        const code = String(row[codeIndex] || "").trim();
+        const description = String(row[descriptionIndex] || "").trim();
+        if (!code) return "";
+        return description ? `${code} - ${description}` : code;
+      })
+      .filter(Boolean);
+  };
 
   return {
-    family: optionColumn("Famiglia - Menu"),
-    series: optionColumn("Serie - Menu"),
-    material: optionColumn("Materiale - Menu"),
-    config: optionColumn("Config - Menu"),
-    connection: optionColumn("Connessione - Menu"),
-    finish: optionColumn("Finitura - Menu"),
-    brand: optionColumn("Brand - Menu"),
-    uom: optionColumn("u.m. - Menu"),
+    family: menuFromCodeDescription("Famiglia - Codice", "Famiglia - Descrizione", "Famiglia - Menu"),
+    series: menuFromCodeDescription("Serie - Codice", "Serie - Descrizione", "Serie - Menu"),
+    material: menuFromCodeDescription("Materiale - Codice", "Materiale - Descrizione", "Materiale - Menu"),
+    config: menuFromCodeDescription("Config - Codice", "Config - Descrizione", "Config - Menu"),
+    connection: menuFromCodeDescription("Connessione - Codice", "Connessione - Descrizione", "Connessione - Menu"),
+    finish: menuFromCodeDescription("Finitura - Codice", "Finitura - Descrizione", "Finitura - Menu"),
+    brand: menuFromCodeDescription("Brand - Codice", "Brand - Descrizione", "Brand - Menu"),
+    uom: menuFromCodeDescription("u.m. - Codice", "u.m. - Descrizione", "u.m. - Menu"),
   };
 }
 
