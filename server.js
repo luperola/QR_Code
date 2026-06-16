@@ -888,8 +888,8 @@ ${clearMessage}
         <label>Serie<select name="series">${selectOptions(menus.series)}</select></label>
         <label>Materiale<select name="material">${selectOptions(menus.material)}</select></label>
         <label>Config<select name="config">${selectOptions(menus.config)}</select></label>
-        <label>OD int (mm)<input name="od_int" placeholder="es. 1/4&quot;" /></label>
-        <label>OD est (mm)<input name="od_ext" placeholder="es. 1/2&quot;" /></label>
+        <label>OD min per coax/rid/tees in inches<input name="od_int" placeholder="es. 1/4&quot;" /></label>
+        <label>OD est per tubi (in per SS, mm per plastica)<input name="od_ext" placeholder="es. 1/2&quot;" /></label>
         <label>Spessore<input name="thickness" placeholder="es. 1,24" /></label>
         <label>Connessione<select name="connection">${selectOptions(menus.connection)}</select></label>
         <label>Finitura<select name="finish">${selectOptions(menus.finish)}</select></label>
