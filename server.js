@@ -213,7 +213,8 @@ function textBeforeDash(value) {
 }
 
 function codeBeforeDash(value) {
-  return textBeforeDash(value).trim();
+  const code = textBeforeDash(value).trim();
+  return code === "NA" ? "" : code;
 }
 
 function templateMenuOptions() {
@@ -293,10 +294,11 @@ function buildSkuFromTemplateFields(fields = {}) {
   const parts = [familyCode];
   if (seriesCode) parts.push(seriesCode);
 
-  const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(familyCode);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1"].includes(seriesCode);
+  const isTubeLikeFamily = ["TB", "EL45", "EL90", "STR-TEE"].includes(familyCode);
+  const isDoubleDiameterFamily = ["RED-TEE"].includes(familyCode);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1", "STD"].includes(seriesCode);
 
-  if (isTubeLikeFamily && seriesCode === "COAX") {
+  if (isDoubleDiameterFamily || (isTubeLikeFamily && seriesCode === "COAX")) {
     if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
     else if (odExt) parts.push(odExt);
     if (thickness) parts.push(thickness);
@@ -967,29 +969,34 @@ document.getElementById("familyFilter")?.addEventListener("change", function () 
 const manualItemForm = document.getElementById("manualItemForm");
 const manualSkuPreview = document.getElementById("manualSkuPreview");
 const manualValuePreview = document.getElementById("manualValuePreview");
+function cleanCodePart(value) {
+  const code = codePart(value);
+  return code === "NA" ? "" : code;
+}
 function codePart(value) {
   return String(value || "").split(/\s*[-–—]\s*/)[0].trim();
 }
 function buildManualSku() {
   if (!manualItemForm) return "";
   const data = new FormData(manualItemForm);
-  const family = codePart(data.get("family"));
+  const family = cleanCodePart(data.get("family"));
   if (!family) return "";
-  const series = codePart(data.get("series"));
-  const material = codePart(data.get("material"));
-  const config = codePart(data.get("config"));
-  const connection = codePart(data.get("connection"));
-  const finish = codePart(data.get("finish"));
-  const brand = codePart(data.get("brand"));
+  const series = cleanCodePart(data.get("series"));
+  const material = cleanCodePart(data.get("material"));
+  const config = cleanCodePart(data.get("config"));
+  const connection = cleanCodePart(data.get("connection"));
+  const finish = cleanCodePart(data.get("finish"));
+  const brand = cleanCodePart(data.get("brand"));
   const model = String(data.get("model") || "").trim();
   const odInt = String(data.get("od_int") || "").trim();
   const odExt = String(data.get("od_ext") || "").trim();
   const thickness = String(data.get("thickness") || "").trim();
   const parts = [family];
   if (series) parts.push(series);
-  const isTubeLikeFamily = ["TB", "EL45", "EL90"].includes(family);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1"].includes(series);
-  if (isTubeLikeFamily && series === "COAX") {
+  const isTubeLikeFamily = ["TB", "EL45", "EL90", "STR-TEE"].includes(family);
+  const isDoubleDiameterFamily = ["RED-TEE"].includes(family);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1", "STD"].includes(series);
+  if (isDoubleDiameterFamily || (isTubeLikeFamily && series === "COAX")) {
     if (odInt && odExt) parts.push(odInt + " x " + odExt);
     else if (odExt) parts.push(odExt);
     if (thickness) parts.push(thickness);
