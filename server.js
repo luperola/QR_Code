@@ -233,7 +233,11 @@ function templateMenuOptions() {
       .map((row) => String(row[index] || "").trim())
       .filter(Boolean);
   };
-  const menuFromCodeDescription = (codeHeader, descriptionHeader, menuHeader) => {
+  const menuFromCodeDescription = (
+    codeHeader,
+    descriptionHeader,
+    menuHeader,
+  ) => {
     const codeIndex = headers.findIndex(
       (h) => String(h || "").trim() === codeHeader,
     );
@@ -254,14 +258,46 @@ function templateMenuOptions() {
   };
 
   return {
-    family: menuFromCodeDescription("Famiglia - Codice", "Famiglia - Descrizione", "Famiglia - Menu"),
-    series: menuFromCodeDescription("Serie - Codice", "Serie - Descrizione", "Serie - Menu"),
-    material: menuFromCodeDescription("Materiale - Codice", "Materiale - Descrizione", "Materiale - Menu"),
-    config: menuFromCodeDescription("Config - Codice", "Config - Descrizione", "Config - Menu"),
-    connection: menuFromCodeDescription("Connessione - Codice", "Connessione - Descrizione", "Connessione - Menu"),
-    finish: menuFromCodeDescription("Finitura - Codice", "Finitura - Descrizione", "Finitura - Menu"),
-    brand: menuFromCodeDescription("Brand - Codice", "Brand - Descrizione", "Brand - Menu"),
-    uom: menuFromCodeDescription("u.m. - Codice", "u.m. - Descrizione", "u.m. - Menu"),
+    family: menuFromCodeDescription(
+      "Famiglia - Codice",
+      "Famiglia - Descrizione",
+      "Famiglia - Menu",
+    ),
+    series: menuFromCodeDescription(
+      "Serie - Codice",
+      "Serie - Descrizione",
+      "Serie - Menu",
+    ),
+    material: menuFromCodeDescription(
+      "Materiale - Codice",
+      "Materiale - Descrizione",
+      "Materiale - Menu",
+    ),
+    config: menuFromCodeDescription(
+      "Config - Codice",
+      "Config - Descrizione",
+      "Config - Menu",
+    ),
+    connection: menuFromCodeDescription(
+      "Connessione - Codice",
+      "Connessione - Descrizione",
+      "Connessione - Menu",
+    ),
+    finish: menuFromCodeDescription(
+      "Finitura - Codice",
+      "Finitura - Descrizione",
+      "Finitura - Menu",
+    ),
+    brand: menuFromCodeDescription(
+      "Brand - Codice",
+      "Brand - Descrizione",
+      "Brand - Menu",
+    ),
+    uom: menuFromCodeDescription(
+      "u.m. - Codice",
+      "u.m. - Descrizione",
+      "u.m. - Menu",
+    ),
   };
 }
 
@@ -294,9 +330,13 @@ function buildSkuFromTemplateFields(fields = {}) {
   const parts = [familyCode];
   if (seriesCode) parts.push(seriesCode);
 
-  const isTubeLikeFamily = ["TB", "EL45", "EL90", "STR-TEE"].includes(familyCode);
+  const isTubeLikeFamily = ["TB", "EL45", "EL90", "STR-TEE"].includes(
+    familyCode,
+  );
   const isDoubleDiameterFamily = ["RED-TEE"].includes(familyCode);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1", "STD"].includes(seriesCode);
+  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1", "STD"].includes(
+    seriesCode,
+  );
 
   if (isDoubleDiameterFamily || (isTubeLikeFamily && seriesCode === "COAX")) {
     if (odInt && odExt) parts.push(`${odInt} x ${odExt}`);
@@ -345,7 +385,10 @@ function manualTemplateItemFromBody(body = {}) {
   const initialQty = Number(String(body.initial_qty || "0").replace(",", "."));
   const unitCost = roundExcel(parseEuroNumber(body.unit_cost), 2);
   const valueAmountRaw = body.value_amount;
-  const calculatedValue = roundExcel((Number.isFinite(initialQty) ? initialQty : 0) * unitCost, 2);
+  const calculatedValue = roundExcel(
+    (Number.isFinite(initialQty) ? initialQty : 0) * unitCost,
+    2,
+  );
 
   return {
     sku: buildSkuFromTemplateFields(body),
@@ -400,10 +443,6 @@ function formatEuro(value) {
 }
 
 function parseItemsFromWorksheet(workbook) {
-  const sheetName = workbook.SheetNames[0];
-  const ws = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
-
   const date1904 = !!(
     workbook.Workbook &&
     workbook.Workbook.WBProps &&
@@ -476,8 +515,62 @@ function parseItemsFromWorksheet(workbook) {
     return "";
   };
 
+  const importText = (value) => {
+    const s = String(value ?? "").trim();
+    if (!s || s === "0" || s.startsWith("=")) return "";
+    return s;
+  };
+
+  const skuFromImportRow = (row) =>
+    importText(getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU")) ||
+    buildSkuFromTemplateFields({
+      family: getValue(row, "Famiglia", "Family"),
+      series: getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
+      material: getValue(row, "Materiale", "Material"),
+      config: getValue(row, "Config", "Configurazione"),
+      od_int: getValue(row, "OD int/min per coax/rid/tees in inches", "OD int", "OD interno"),
+      od_ext: getValue(row, "OD est per tubi (in per SS, mm per plastica)", "OD est", "OD"),
+      thickness: getValue(row, "Spessore", "Thickness"),
+      connection: getValue(row, "Connessione", "Connection"),
+      finish: getValue(row, "Finitura", "Finish"),
+      brand: getValue(row, "Brand", "Marca"),
+      model: getValue(row, "Modello", "Model"),
+    });
+
+  const sheetCandidates = workbook.SheetNames.map((sheetName) => {
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+    const meaningfulRows = rows.filter((row) => {
+      const sku = skuFromImportRow(row);
+      const description = importText(
+        getValue(row, "Description", "Descrizione"),
+      );
+      return sku || description;
+    });
+    const completeRows = meaningfulRows.filter((row) => {
+      const sku = skuFromImportRow(row);
+      const description = importText(
+        getValue(row, "Description", "Descrizione"),
+      );
+      return sku && description;
+    });
+    return { sheetName, rows: meaningfulRows, completeRows: completeRows.length };
+  });
+
+  sheetCandidates.sort((a, b) => {
+    if (b.completeRows !== a.completeRows) return b.completeRows - a.completeRows;
+    if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+    if (a.sheetName === "Template") return -1;
+    if (b.sheetName === "Template") return 1;
+    if (a.sheetName === "Import_Gestionale") return -1;
+    if (b.sheetName === "Import_Gestionale") return 1;
+    return 0;
+  });
+
+  const rows = sheetCandidates[0]?.rows || [];
+
   return rows.map((row) => {
-    const family = textAfterDash(getValue(row, "Famiglia", "Family"));
+    const family = textAfterDash(importText(getValue(row, "Famiglia", "Family")));
     const dimension_1 = String(
       getValue(
         row,
@@ -498,19 +591,17 @@ function parseItemsFromWorksheet(workbook) {
         "Diametro 2",
       ),
     ).trim();
-    const subfamily = textAfterDash(
+    const subfamily = textAfterDash(importText(
       getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
-    );
-    const sku = String(
-      getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU"),
-    ).trim();
-    const description = String(
+    ));
+    const sku = skuFromImportRow(row);
+    const description = importText(
       getValue(row, "Description", "Descrizione"),
-    ).trim();
-    const lot = String(getValue(row, "Lot", "LOT", "Nr Linde")).trim();
-    const lotFallback = String(
+    );
+    const lot = importText(getValue(row, "Lot", "LOT", "Nr Linde"));
+    const lotFallback = importText(
       getValue(row, "ID interno", "ID", "Nr.", "Nr"),
-    ).trim();
+    );
 
     const entryRaw = getValue(
       row,
@@ -534,7 +625,7 @@ function parseItemsFromWorksheet(workbook) {
       "Unita",
       "Unità",
     );
-    const uom = textBeforeDash(uomRaw) || "PC";
+    const uom = textBeforeDash(importText(uomRaw)) || "PC";
 
     const qtyRaw = getValue(
       row,
@@ -827,11 +918,15 @@ app.get("/items", requireAuth, async (req, res) => {
   const menus = templateMenuOptions();
   const manualError = String(req.query.manual_error || "");
   const manualCreated = String(req.query.manual_created || "");
+  const importError = String(req.query.import_error || "");
   const manualMessage = manualError
     ? `<div class="flash err">${escapeHtml(manualError)}</div>`
     : manualCreated
       ? `<div class="flash ok">Item creato: <span class="mono">${escapeHtml(manualCreated)}</span>. QR disponibile in Stampa QR.</div>`
       : "";
+  const importMessage = importError
+    ? `<div class="flash err">${escapeHtml(importError)}</div>`
+    : "";
   const cleared = String(req.query.cleared || "") === "1";
   const clearMessage = cleared
     ? `<div class="flash ok">Stock e movimenti cancellati.</div>`
@@ -876,6 +971,7 @@ ${nav(req, "items")}
     <div>
       <h1>Items</h1>
 ${manualMessage}
+${importMessage}
 ${clearMessage}
     </div>
     <div class="card pad items-import-card">
@@ -1079,51 +1175,65 @@ app.post(
   requireAuth,
   upload.single("file"),
   async (req, res) => {
-    if (!req.file) return res.status(400).send("No file uploaded");
-    const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
-    const parsedRows = parseItemsFromWorksheet(wb);
+    try {
+      if (!req.file) return res.status(400).send("No file uploaded");
+      const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
+      const parsedRows = parseItemsFromWorksheet(wb);
 
-    let ok = 0;
-    let skipped = 0;
+      let ok = 0;
+      let skipped = 0;
 
-    for (const parsed of parsedRows) {
-      const {
-        sku,
-        description,
-        family,
-        subfamily,
-        lot,
-        entry_date,
-        uom,
-        initial_qty,
-        value_amount,
-        unit_cost,
-        dimension_1,
-        dimension_2,
-      } = parsed;
-      if (!sku || !description || !lot) {
-        skipped++;
-        continue;
+      for (const parsed of parsedRows) {
+        const {
+          sku,
+          description,
+          family,
+          subfamily,
+          lot,
+          entry_date,
+          uom,
+          initial_qty,
+          value_amount,
+          unit_cost,
+          dimension_1,
+          dimension_2,
+        } = parsed;
+        if (!sku || !description || !lot) {
+          skipped++;
+          continue;
+        }
+
+        await upsertItem({
+          sku,
+          description,
+          family: family || "",
+          subfamily: subfamily || "",
+          lot,
+          entry_date,
+          uom,
+          initial_qty,
+          value_amount,
+          unit_cost,
+          dimension_1,
+          dimension_2,
+        });
+        ok++;
       }
 
-      await upsertItem({
-        sku,
-        description,
-        family: family || "",
-        subfamily: subfamily || "",
-        lot,
-        entry_date,
-        uom,
-        initial_qty,
-        value_amount,
-        unit_cost,
-        dimension_1,
-        dimension_2,
-      });
-      ok++;
-    }
+      if (ok === 0) {
+        const detail = skipped
+          ? `Nessun item importato: ${skipped} righe hanno descrizione ma manca lo SKU. Compila Famiglia/Serie/campi SKU nel template, salva il file e riprova.`
+          : "Nessun item importato: non ho trovato righe con SKU e Descrizione.";
+        return res.redirect(`/items?import_error=${encodeURIComponent(detail)}`);
+      }
 
-    return res.redirect(`/items?imported=${ok}&skipped=${skipped}`);
+      return res.redirect(`/items?imported=${ok}&skipped=${skipped}`);
+    } catch (err) {
+      console.error("Items import failed", err);
+      return res.redirect(
+        `/items?import_error=${encodeURIComponent("Import non riuscito: controlla il file Excel e riprova.")}`,
+      );
+    }
   },
 );
 
