@@ -863,11 +863,23 @@ function normalizeFamily(value) {
     .toUpperCase();
 }
 
+function familyAliases(token) {
+  const value = normalizeFamily(token);
+  const aliases = {
+    TB: ["TB", "TUBO"],
+    TUBE: ["TUBE", "TUBO", "TB"],
+    EL45: ["EL45", "CURVA 45°", "CURVA 45"],
+    EL90: ["EL90", "CURVA 90°", "CURVA 90"],
+  };
+  return aliases[value] || [value];
+}
+
 function familyTokens(value) {
-  return String(value || "")
+  const tokens = String(value || "")
     .split(/[;,/|]+/)
     .map((v) => normalizeFamily(v))
     .filter(Boolean);
+  return Array.from(new Set(tokens.flatMap((token) => familyAliases(token))));
 }
 
 function normalizeDimensionValue(value) {

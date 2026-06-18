@@ -1665,13 +1665,27 @@ app.get("/api/bom-row/:rowId/candidates", requireAuth, async (req, res) => {
       f.startsWith("VAL") ||
       f.startsWith("MAN"),
   );
-  const selectedSubfamilies = String(
+  let selectedSubfamilies = String(
     req.query.subfamilies || req.query.subfamily || "",
   )
     .split("||")
     .map((v) => v.trim())
     .filter(Boolean);
-  const search = String(req.query.search || "").trim();
+  const requestedSearch = String(req.query.search || "").trim();
+  const autoStSearch = (() => {
+    const description = String(row.description || "").toUpperCase();
+    if (!description.startsWith("ST |")) return "";
+    if (description.includes("EQUIVALENTE ULTRON COAX EP")) return "COAX";
+    if (description.includes("EQUIVALENTE ULTRON")) return "ULTRON";
+    if (description.includes("EQUIVALENTE TCC")) return "TCC";
+    return "";
+  })();
+  const search = requestedSearch || autoStSearch;
+  if (selectedSubfamilies.length === 0 && autoStSearch) {
+    if (autoStSearch === "ULTRON") selectedSubfamilies = ["ULTRON"];
+    else if (autoStSearch === "TCC") selectedSubfamilies = ["TCC", "TCC.1"];
+    else if (autoStSearch === "COAX") selectedSubfamilies = ["Coassiale"];
+  }
 
   const baseRow = {
     id: row.id,
@@ -1771,12 +1785,26 @@ app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
   const row = await getBomRowById(rowId);
   if (!row) return res.status(404).send("Riga BOM non trovata");
 
-  const selectedSubfamilies = []
+  let selectedSubfamilies = []
     .concat(req.query.subfamily || [])
     .concat(String(req.query.subfamilies || "").split("||"))
     .map((v) => String(v || "").trim())
     .filter(Boolean);
-  const search = String(req.query.search || "").trim();
+  const requestedSearch = String(req.query.search || "").trim();
+  const autoStSearch = (() => {
+    const description = String(row.description || "").toUpperCase();
+    if (!description.startsWith("ST |")) return "";
+    if (description.includes("EQUIVALENTE ULTRON COAX EP")) return "COAX";
+    if (description.includes("EQUIVALENTE ULTRON")) return "ULTRON";
+    if (description.includes("EQUIVALENTE TCC")) return "TCC";
+    return "";
+  })();
+  const search = requestedSearch || autoStSearch;
+  if (selectedSubfamilies.length === 0 && autoStSearch) {
+    if (autoStSearch === "ULTRON") selectedSubfamilies = ["ULTRON"];
+    else if (autoStSearch === "TCC") selectedSubfamilies = ["TCC", "TCC.1"];
+    else if (autoStSearch === "COAX") selectedSubfamilies = ["Coassiale"];
+  }
   const family = String(row.source_family || "")
     .trim()
     .toUpperCase();
