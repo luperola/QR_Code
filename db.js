@@ -89,9 +89,16 @@ export async function initDb() {
       UNIQUE(equipment, sku)
     );
 
+    CREATE TABLE IF NOT EXISTS printed_labels (
+      item_id BIGINT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      print_count INTEGER NOT NULL DEFAULT 0,
+      last_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
     CREATE INDEX IF NOT EXISTS idx_bom_rows_sku ON bom_rows(sku);
     CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
+    CREATE INDEX IF NOT EXISTS idx_printed_labels_last ON printed_labels(last_printed_at DESC);
     ALTER TABLE bom_rows DROP CONSTRAINT IF EXISTS bom_rows_bom_id_sku_key;
    
    ALTER TABLE movements ADD COLUMN IF NOT EXISTS equipment TEXT;
@@ -287,6 +294,70 @@ export async function getItemBySkuLot(sku, lot) {
     [sku, lot],
   );
   return rows[0] || null;
+}
+
+export async function markLabelsPrinted(itemIds = []) {
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(itemIds) ? itemIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  );
+  if (ids.length === 0) return 0;
+
+  const { rowCount } = await db.query(
+    `
+    INSERT INTO printed_labels (item_id, print_count, last_printed_at)
+    SELECT id, 1, NOW()
+    FROM items
+    WHERE id = ANY($1::bigint[])
+    ON CONFLICT (item_id) DO UPDATE SET
+      print_count = printed_labels.print_count + 1,
+      last_printed_at = NOW()
+    `,
+    [ids],
+  );
+  return rowCount || 0;
+}
+
+export async function listPrintedLabels({ search = "", limit = 300 } = {}) {
+  const params = [];
+  let where = "";
+  const q = String(search || "").trim();
+  if (q) {
+    params.push(`%${q.toUpperCase()}%`);
+    where = `WHERE (
+      UPPER(i.sku) LIKE $${params.length}
+      OR UPPER(i.description) LIKE $${params.length}
+      OR UPPER(i.family) LIKE $${params.length}
+      OR UPPER(i.subfamily) LIKE $${params.length}
+      OR UPPER(i.lot) LIKE $${params.length}
+    )`;
+  }
+  params.push(Number(limit) || 300);
+
+  const { rows } = await db.query(
+    `
+    SELECT
+      i.id,
+      i.sku,
+      i.description,
+      i.family,
+      i.subfamily,
+      i.lot,
+      i.uom,
+      p.print_count,
+      p.last_printed_at
+    FROM printed_labels p
+    JOIN items i ON i.id = p.item_id
+    ${where}
+    ORDER BY p.last_printed_at DESC, i.sku
+    LIMIT $${params.length}
+    `,
+    params,
+  );
+  return rows;
 }
 
 export async function deleteItemById(itemId) {

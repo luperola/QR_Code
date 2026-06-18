@@ -49,6 +49,8 @@ import {
   searchStockItemsForManual,
   addManualItemsToBom,
   matchBomRowToMultipleItems,
+  markLabelsPrinted,
+  listPrintedLabels,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -750,6 +752,7 @@ function nav(req, active) {
     <a href="/" class="${active === "stock" ? "active" : ""}">Stock</a>
     <a href="/items" class="${active === "items" ? "active" : ""}">Items</a>
     <a href="/labels" class="${active === "labels" ? "active" : ""}">Stampa QR</a>
+    <a href="/labels/printed" class="${active === "printed-labels" ? "active" : ""}">QR stampati</a>
     <a href="/movements" class="${active === "movements" ? "active" : ""}">Movimenti</a>
      <a href="/bom" class="${active === "bom" ? "active" : ""}">BOM</a>
     <a href="/admin" class="${active === "admin" ? "active" : ""}">Admin</a>
@@ -2465,6 +2468,204 @@ app.post("/api/bom-row/:rowId/multi-match", requireAuth, async (req, res) => {
       .status(500)
       .json({ ok: false, error: error.message || "Errore multi match" });
   }
+});
+
+async function labelCardsForItems(items = [], req) {
+  const baseUrl = getBaseUrl(req);
+  return Promise.all(
+    items.map(async (it) => {
+      const url = `${baseUrl}/q/${it.id}`;
+      const dataUrl = await QRCode.toDataURL(url, {
+        margin: 2,
+        width: 520,
+        errorCorrectionLevel: "H",
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
+      });
+
+      return `
+      <div class="label">
+        <div class="label-description">${escapeHtml(it.description || "")}</div>
+        <img class="qr" src="${dataUrl}" alt="QR" />
+        <div class="mono sku">${escapeHtml(it.sku || "")}</div>
+      </div>
+      `;
+    }),
+  );
+}
+
+app.get("/labels", requireAuth, async (req, res) => {
+  const items = await listItems();
+  const rows = items
+    .map(
+      (it) => `
+      <tr data-search="${escapeHtml([it.sku, it.description, it.family, it.subfamily, it.lot].join(" "))}">
+        <td><input type="checkbox" name="item_id" value="${Number(it.id)}"></td>
+        <td class="mono">${escapeHtml(it.sku || "")}</td>
+        <td>${escapeHtml(it.description || "")}</td>
+        <td>${escapeHtml(it.family || "")}</td>
+        <td>${escapeHtml(it.subfamily || "")}</td>
+        <td>${escapeHtml(it.lot || "")}</td>
+      </tr>`,
+    )
+    .join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stampa QR - QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "labels")}
+<main class="container">
+  <h1>Stampa QR</h1>
+  <p class="muted">Scegli quali QR stampare. Puoi selezionare singoli item oppure usare Stampa tutti.</p>
+  <div class="row">
+    <input id="labelSearch" placeholder="Cerca SKU, descrizione, famiglia..." />
+    <button class="btn secondary" type="button" onclick="selectVisibleLabels(true)">Seleziona visibili</button>
+    <button class="btn secondary" type="button" onclick="selectVisibleLabels(false)">Pulisci</button>
+    <a class="btn secondary" href="/labels/printed">QR gia stampati</a>
+  </div>
+  <form method="post" action="/labels/print">
+    <div class="row" style="margin:12px 0">
+      <button class="btn ok" type="submit">Stampa selezionati</button>
+      <button class="btn" type="submit" name="print_all" value="1">Stampa tutti</button>
+      <a class="btn secondary" href="/items">Aggiungi items</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Sottofamiglia</th><th>Lot</th></tr></thead>
+        <tbody id="labelRows">${rows || `<tr><td colspan="6" class="muted">Nessun item.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </form>
+</main>
+<script>
+const labelSearch = document.getElementById("labelSearch");
+function applyLabelSearch() {
+  const q = String(labelSearch?.value || "").toLowerCase().trim();
+  document.querySelectorAll("#labelRows tr[data-search]").forEach((row) => {
+    row.style.display = !q || String(row.dataset.search || "").toLowerCase().includes(q) ? "" : "none";
+  });
+}
+function selectVisibleLabels(checked) {
+  document.querySelectorAll("#labelRows tr[data-search]").forEach((row) => {
+    if (row.style.display !== "none") {
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = checked;
+    }
+  });
+}
+labelSearch?.addEventListener("input", applyLabelSearch);
+</script>
+</body>
+</html>`);
+});
+
+app.post("/labels/print", requireAuth, async (req, res) => {
+  const allItems = await listItems();
+  const selectedIds = req.body?.print_all
+    ? allItems.map((it) => Number(it.id))
+    : []
+        .concat(req.body?.item_id || [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+  const selectedSet = new Set(selectedIds);
+  const items = allItems.filter((it) => selectedSet.has(Number(it.id)));
+
+  if (items.length === 0) return res.redirect("/labels");
+
+  await markLabelsPrinted(items.map((it) => it.id));
+  const cards = await labelCardsForItems(items, req);
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stampa QR - QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    @media print {
+      header, .no-print { display: none !important; }
+      body { background:#fff; }
+      .container { max-width: none; padding: 0; }
+      .label-sheet { gap: 6mm; }
+      .label { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+${nav(req, "labels")}
+<main class="container">
+  <div class="row no-print">
+    <button class="btn" onclick="window.print()">Stampa</button>
+    <a class="btn secondary" href="/labels">Torna a selezione</a>
+    <a class="btn secondary" href="/labels/printed">QR gia stampati</a>
+  </div>
+  <div class="label-sheet">${cards.join("")}</div>
+</main>
+</body>
+</html>`);
+});
+
+app.get("/labels/printed", requireAuth, async (req, res) => {
+  const search = String(req.query.search || "").trim();
+  const items = await listPrintedLabels({ search });
+  const rows = items
+    .map(
+      (it) => `
+      <tr>
+        <td><input type="checkbox" name="item_id" value="${Number(it.id)}"></td>
+        <td class="mono">${escapeHtml(it.sku || "")}</td>
+        <td>${escapeHtml(it.description || "")}</td>
+        <td>${escapeHtml(it.family || "")}</td>
+        <td>${escapeHtml(it.subfamily || "")}</td>
+        <td>${escapeHtml(it.lot || "")}</td>
+        <td>${Number(it.print_count || 0)}</td>
+        <td>${formatDateTimeCET(it.last_printed_at)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QR stampati - QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "printed-labels")}
+<main class="container">
+  <h1>QR stampati</h1>
+  <p class="muted">Archivio degli item gia mandati in stampa, utile per ristampare rapidamente.</p>
+  <form class="row" method="get" action="/labels/printed">
+    <input name="search" value="${escapeHtml(search)}" placeholder="Cerca SKU, descrizione, famiglia..." />
+    <button class="btn" type="submit">Cerca</button>
+    <a class="btn secondary" href="/labels/printed">Pulisci</a>
+    <a class="btn secondary" href="/labels">Nuova stampa QR</a>
+  </form>
+  <form method="post" action="/labels/print">
+    <div class="row" style="margin:12px 0">
+      <button class="btn ok" type="submit">Ristampa selezionati</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Sottofamiglia</th><th>Lot</th><th>Stampe</th><th>Ultima stampa</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8" class="muted">Nessun QR stampato trovato.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </form>
+</main>
+</body>
+</html>`);
 });
 
 app.get("/labels", requireAuth, async (req, res) => {
