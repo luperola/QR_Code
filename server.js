@@ -521,41 +521,45 @@ function parseItemsFromWorksheet(workbook) {
     return s;
   };
 
-  const skuFromImportRow = (row) =>
+  const skuFromImportRow = (row, sheetName = "") =>
     importText(getValue(row, "SKU", "Sku", "SKU Tecnico", "Codice SKU")) ||
-    buildSkuFromTemplateFields({
-      family: getValue(row, "Famiglia", "Family"),
-      series: getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
-      material: getValue(row, "Materiale", "Material"),
-      config: getValue(row, "Config", "Configurazione"),
-      od_int: getValue(row, "OD int/min per coax/rid/tees in inches", "OD int", "OD interno"),
-      od_ext: getValue(row, "OD est per tubi (in per SS, mm per plastica)", "OD est", "OD"),
-      thickness: getValue(row, "Spessore", "Thickness"),
-      connection: getValue(row, "Connessione", "Connection"),
-      finish: getValue(row, "Finitura", "Finish"),
-      brand: getValue(row, "Brand", "Marca"),
-      model: getValue(row, "Modello", "Model"),
-    });
+    (sheetName === "Template"
+      ? buildSkuFromTemplateFields({
+          family: getValue(row, "Famiglia", "Family"),
+          series: getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
+          material: getValue(row, "Materiale", "Material"),
+          config: getValue(row, "Config", "Configurazione"),
+          od_int: getValue(row, "OD int/min per coax/rid/tees in inches", "OD int", "OD interno"),
+          od_ext: getValue(row, "OD est per tubi (in per SS, mm per plastica)", "OD est", "OD"),
+          thickness: getValue(row, "Spessore", "Thickness"),
+          connection: getValue(row, "Connessione", "Connection"),
+          finish: getValue(row, "Finitura", "Finish"),
+          brand: getValue(row, "Brand", "Marca"),
+          model: getValue(row, "Modello", "Model"),
+        })
+      : "");
 
-  const sheetCandidates = workbook.SheetNames.map((sheetName) => {
+  const sheetCandidates = workbook.SheetNames
+    .filter((sheetName) => !["Liste_Menu", "Regole_SKU"].includes(sheetName))
+    .map((sheetName) => {
     const ws = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
     const meaningfulRows = rows.filter((row) => {
-      const sku = skuFromImportRow(row);
+      const sku = skuFromImportRow(row, sheetName);
       const description = importText(
         getValue(row, "Description", "Descrizione"),
       );
       return sku || description;
     });
     const completeRows = meaningfulRows.filter((row) => {
-      const sku = skuFromImportRow(row);
+      const sku = skuFromImportRow(row, sheetName);
       const description = importText(
         getValue(row, "Description", "Descrizione"),
       );
       return sku && description;
     });
-    return { sheetName, rows: meaningfulRows, completeRows: completeRows.length };
-  });
+      return { sheetName, rows: meaningfulRows, completeRows: completeRows.length };
+    });
 
   sheetCandidates.sort((a, b) => {
     if (b.completeRows !== a.completeRows) return b.completeRows - a.completeRows;
@@ -594,7 +598,7 @@ function parseItemsFromWorksheet(workbook) {
     const subfamily = textAfterDash(importText(
       getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
     ));
-    const sku = skuFromImportRow(row);
+    const sku = skuFromImportRow(row, sheetCandidates[0]?.sheetName || "");
     const description = importText(
       getValue(row, "Description", "Descrizione"),
     );
