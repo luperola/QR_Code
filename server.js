@@ -1534,14 +1534,7 @@ const handleBomImport = async (req, res) => {
     if (facilities.includes("TEST") || facilities.includes("CERTIFICATION")) return "SKIP";
     if (facilities.includes("TUBE")) return "TB";
     if (facilities.includes("ELBOW") || facilities.includes("CURVE")) return "EL45;EL90";
-    if (facilities.includes("REDUC")) return "RED";
-    if (facilities.includes("TEE")) return isDoubleEnvelope ? "RED-TEE" : "STR-TEE";
-    if (facilities.includes("VALVE")) return "BV;DV";
-    if (facilities.includes("REGULATOR") || facilities.includes("MANOMETER")) return "PR";
-    if (facilities.includes("FILTER")) return "FIL";
-    if (facilities.includes("CAP")) return "CAP";
-    if (facilities.includes("FITTING") || facilities.includes("CONNECTOR")) return "FIT";
-    return "";
+    return "SKIP";
   };
   const stMappedDescription = ({
     codeValue,
