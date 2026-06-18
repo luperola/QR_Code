@@ -219,6 +219,15 @@ function codeBeforeDash(value) {
   return code === "NA" ? "" : code;
 }
 
+function menuDisplayValue(value) {
+  const code = textBeforeDash(value);
+  const text = textAfterDash(value);
+  if (/^TCC(?:\.?\d+)?$/i.test(code) && /^TCC(?:\.?\d+)?$/i.test(text)) {
+    return code;
+  }
+  return text;
+}
+
 function templateMenuOptions() {
   const templatePath = path.join(__dirname, "Template_ORIGINAL.xlsx");
   const workbook = XLSX.readFile(templatePath);
@@ -576,7 +585,7 @@ function parseItemsFromWorksheet(workbook) {
   const rows = sheetCandidates[0]?.rows || [];
 
   return rows.map((row) => {
-    const family = textAfterDash(importText(getValue(row, "Famiglia", "Family")));
+    const family = menuDisplayValue(importText(getValue(row, "Famiglia", "Family")));
     const dimension_1 = String(
       getValue(
         row,
@@ -597,7 +606,7 @@ function parseItemsFromWorksheet(workbook) {
         "Diametro 2",
       ),
     ).trim();
-    const subfamily = textAfterDash(importText(
+    const subfamily = menuDisplayValue(importText(
       getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
     ));
     const sku = skuFromImportRow(row, sheetCandidates[0]?.sheetName || "");
