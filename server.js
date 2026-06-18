@@ -1430,6 +1430,10 @@ const handleBomImport = async (req, res) => {
     const hasFamily = normalized.some(
       (h) => h === "family" || h === "famiglia",
     );
+    const hasStColumns =
+      normalized.some((h) => h === "code") &&
+      normalized.some((h) => h === "facilities") &&
+      normalized.some((h) => h === "materials");
     const hasQuantity =
       normalized.some((h) => h === "quantity dima") ||
       normalized.some((h) => h === "quantity supplier") ||
@@ -1437,14 +1441,14 @@ const handleBomImport = async (req, res) => {
       normalized.some((h) => h === "qty" || h === "q ty" || h === "qta") ||
       joined.includes("quantity dima") ||
       joined.includes("quantity supplier");
-    return hasDiameter && hasFamily && hasQuantity;
+    return hasDiameter && (hasFamily || hasStColumns) && hasQuantity;
   });
 
   if (headerRowIndex < 0) {
     return res
       .status(400)
       .send(
-        "Header BOM non trovata: servono colonne 'DIAMETER', 'Family' e 'Quantity DIMA' / 'Quantity' / 'Quantity Supplier'.",
+        "Header BOM non trovata: servono colonne 'DIAMETER', 'Family' e 'Quantity DIMA' / 'Quantity' / 'Quantity Supplier'. Per file ST servono CODE, FACILITIES, MATERIALS, DIAMETER e Quantity DIMA.",
       );
   }
 
@@ -1464,6 +1468,7 @@ const handleBomImport = async (req, res) => {
 
   const idx = {
     no: col("N°", "N", "No"),
+    code: col("CODE"),
     section: col("Section"),
     subsection: col("Subsection"),
     facilities: col("FACILITIES"),
@@ -1484,11 +1489,18 @@ const handleBomImport = async (req, res) => {
     family: col("Family", "Famiglia"),
   };
 
-  if (idx.qtySupplier < 0 || idx.family < 0 || idx.diameter < 0) {
+  const isStBom =
+    idx.code >= 0 &&
+    idx.facilities >= 0 &&
+    idx.materials >= 0 &&
+    idx.diameter >= 0 &&
+    idx.qtySupplier >= 0;
+
+  if (idx.qtySupplier < 0 || (!isStBom && idx.family < 0) || idx.diameter < 0) {
     return res
       .status(400)
       .send(
-        "Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier.",
+        "Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier. Per file ST servono CODE, FACILITIES, MATERIALS, DIAMETER e Quantity DIMA.",
       );
   }
 
@@ -1505,13 +1517,75 @@ const handleBomImport = async (req, res) => {
   };
 
   const cell = (row, index) => (index >= 0 ? row[index] : "");
+  const stGasSeries = (codeValue) => {
+    const code = norm(codeValue).toUpperCase();
+    if (code.includes("BULK GASES")) return "UL";
+    if (code.includes("CDA") || code.includes("O2S") || code.includes("SN2")) return "TCC/TCC.1";
+    if (code.includes("GAS SINGLE ENVEL")) return "UL";
+    if (code.includes("GAS DOUBLE ENVEL")) return "COAX";
+    return "";
+  };
+  const stFamilyFromFacilities = ({ codeValue, facilitiesValue }) => {
+    const code = norm(codeValue).toUpperCase();
+    const facilities = norm(facilitiesValue).toUpperCase();
+    const isDoubleEnvelope = code.includes("GAS DOUBLE ENVEL");
+
+    if (!stGasSeries(codeValue)) return "SKIP";
+    if (facilities.includes("TEST") || facilities.includes("CERTIFICATION")) return "SKIP";
+    if (facilities.includes("TUBE")) return "TB";
+    if (facilities.includes("ELBOW") || facilities.includes("CURVE")) return "EL45;EL90";
+    if (facilities.includes("REDUC")) return "RED";
+    if (facilities.includes("TEE")) return isDoubleEnvelope ? "RED-TEE" : "STR-TEE";
+    if (facilities.includes("VALVE")) return "BV;DV";
+    if (facilities.includes("REGULATOR") || facilities.includes("MANOMETER")) return "PR";
+    if (facilities.includes("FILTER")) return "FIL";
+    if (facilities.includes("CAP")) return "CAP";
+    if (facilities.includes("FITTING") || facilities.includes("CONNECTOR")) return "FIT";
+    return "";
+  };
+  const stMappedDescription = ({
+    codeValue,
+    facilitiesValue,
+    materialsValue,
+    brandValue,
+    characteristicsValue,
+    diameterValue,
+  }) => {
+    const series = stGasSeries(codeValue);
+    const seriesLabel =
+      series === "UL"
+        ? "ULTRON elettropulito"
+        : series === "TCC/TCC.1"
+          ? "TCC/TCC.1"
+          : series === "COAX"
+            ? "ULTRON COAX EP"
+            : "";
+    return [
+      "ST",
+      codeValue,
+      facilitiesValue,
+      materialsValue,
+      brandValue,
+      characteristicsValue,
+      diameterValue,
+      seriesLabel ? `equivalente ${seriesLabel}` : "",
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .join(" | ");
+  };
   const parsedRows = [];
   let skipped = 0;
 
   for (let r = headerRowIndex + 1; r < matrix.length; r++) {
     const row = matrix[r];
     const qtyRequired = numberValue(cell(row, idx.qtySupplier));
-    const sourceFamily = String(cell(row, idx.family) || "").trim();
+    const sourceFamily = isStBom
+      ? stFamilyFromFacilities({
+          codeValue: cell(row, idx.code),
+          facilitiesValue: cell(row, idx.facilities),
+        })
+      : String(cell(row, idx.family) || "").trim();
     // Regola richiesta: usare sempre la colonna H / header DIAMETER del BOM come riferimento dimensionale.
     const sourceDimension = String(cell(row, idx.diameter) || "").trim();
 
@@ -1524,21 +1598,31 @@ const handleBomImport = async (req, res) => {
       continue;
     }
 
-    const descriptionParts = [
-      cell(row, idx.section),
-      cell(row, idx.subsection),
-      cell(row, idx.facilities),
-      cell(row, idx.materials),
-      cell(row, idx.brand),
-      cell(row, idx.characteristics),
-      cell(row, idx.diameter),
-    ]
-      .map((v) => String(v || "").trim())
-      .filter(Boolean);
+    const description = isStBom
+      ? stMappedDescription({
+          codeValue: cell(row, idx.code),
+          facilitiesValue: cell(row, idx.facilities),
+          materialsValue: cell(row, idx.materials),
+          brandValue: cell(row, idx.brand),
+          characteristicsValue: cell(row, idx.characteristics),
+          diameterValue: cell(row, idx.diameter),
+        })
+      : [
+          cell(row, idx.section),
+          cell(row, idx.subsection),
+          cell(row, idx.facilities),
+          cell(row, idx.materials),
+          cell(row, idx.brand),
+          cell(row, idx.characteristics),
+          cell(row, idx.diameter),
+        ]
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .join(" | ");
 
     parsedRows.push({
       sku: "",
-      description: descriptionParts.join(" | "),
+      description,
       qty_required: qtyRequired,
       source_line_no: Number(cell(row, idx.no)) || r + 1,
       source_family: sourceFamily,
@@ -2249,8 +2333,11 @@ function renderCandidateItems(candidates) {
   }
 
   const defaultQty = Number((activeBomRow && activeBomRow.qty_required) || 0);
-  const body = candidates.map((c, idx) =>
-    '<tr>' +
+  const body = candidates.map((c, idx) => {
+    const onhand = Number(c.qty_onhand || 0);
+    const missing = Math.max(0, defaultQty - onhand);
+    const stockStatus = missing > 0 ? ("Da comprare " + missing) : "OK";
+    return '<tr>' +
       '<td><input type="checkbox" class="match-check" data-item-id="' + Number(c.item_id) + '" /></td>' +
       '<td class="mono">' + htmlEscape(c.sku) + '</td>' +
       '<td>' + htmlEscape(c.description) + '</td>' +
@@ -2261,15 +2348,16 @@ function renderCandidateItems(candidates) {
       '<td>' + htmlEscape(c.dimension_match ? "SI" : "NO") + '</td>' +
       '<td>' + htmlEscape(c.lot || "") + '</td>' +
       '<td>' + htmlEscape(c.uom || "") + '</td>' +
-      '<td style="text-align:right"><b>' + Number(c.qty_onhand || 0) + '</b></td>' +
+      '<td style="text-align:right"><b>' + onhand + '</b></td>' +
+      '<td>' + htmlEscape(stockStatus) + '</td>' +
       '<td><input class="match-qty" data-item-id="' + Number(c.item_id) + '" type="number" step="0.01" min="0" value="' + (idx === 0 ? defaultQty : 0) + '" style="width:90px" /></td>' +
-    '</tr>'
-  ).join("");
+    '</tr>';
+  }).join("");
 
   document.getElementById("matchCandidates").innerHTML =
     '<div class="row" style="margin-bottom:10px"><button class="btn ok" type="button" onclick="confirmSelectedMatches()">Conferma selezionati</button></div>' +
     '<table>' +
-      '<thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia stock</th><th>Sottofamiglia</th><th>Dim.1</th><th>Dim.2</th><th>Dim. match</th><th>Lot</th><th>U.M.</th><th>Giacenza</th><th>Qty</th></tr></thead>' +
+      '<thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia stock</th><th>Sottofamiglia</th><th>Dim.1</th><th>Dim.2</th><th>Dim. match</th><th>Lot</th><th>U.M.</th><th>Giacenza</th><th>Esito</th><th>Qty</th></tr></thead>' +
       '<tbody>' + body + '</tbody>' +
     '</table>';
 }
