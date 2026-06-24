@@ -401,10 +401,14 @@ function syncBomTemplateWorkbook(optionsByCategory) {
     ];
 
     inputSheet.getColumn("E").width = inputSheet.getColumn("D").width;
+    inputSheet.getColumn("F").width = 42;
     listSheet.getColumn("E").width = listSheet.getColumn("D").width;
     for (let row = 1; row <= 501; row++) {
       inputSheet.getCell(`E${row}`).style = JSON.parse(
         JSON.stringify(inputSheet.getCell(`D${row}`).style || {}),
+      );
+      inputSheet.getCell(`F${row}`).style = JSON.parse(
+        JSON.stringify(inputSheet.getCell(`E${row}`).style || {}),
       );
     }
     for (let row = 1; row <= Math.max(106, listSheet.rowCount); row++) {
@@ -414,6 +418,7 @@ function syncBomTemplateWorkbook(optionsByCategory) {
     }
 
     inputSheet.getCell("A1").value = "Linea";
+    inputSheet.getCell("F1").value = "SKU";
     const lineValues = [];
     for (let row = 2; row <= listSheet.rowCount; row++) {
       const value = String(listSheet.getCell(`A${row}`).value || "").trim();
@@ -450,6 +455,11 @@ function syncBomTemplateWorkbook(optionsByCategory) {
           ],
         };
       }
+      inputSheet.getCell(`F${row}`).value = {
+        formula:
+          `IF(OR(B${row}="",C${row}="",D${row}="",E${row}=""),"",` +
+          `B${row}&"-"&C${row}&"-"&D${row}&"-"&IF(E${row}="Linde","LN",IF(E${row}="GTS","GTS",E${row})))`,
+      };
     }
 
       await workbook.xlsx.writeFile(templatePath);
