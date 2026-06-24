@@ -603,16 +603,7 @@ function buildStockSku(fields = {}) {
 
   const ownershipCode =
     ownership === "Linde" ? "LN" : ownership === "GTS" ? "GTS" : ownership;
-  const areaCode =
-    area === "Area 1"
-      ? "A1"
-      : area === "Area 2"
-        ? "A2"
-        : area === "Area 3"
-          ? "A3"
-          : area;
-
-  return [description, type, measure, ownershipCode, areaCode].join("-");
+  return [description, type, measure, ownershipCode].join("-");
 }
 
 function manualTemplateItemFromBody(body = {}) {
@@ -1342,8 +1333,7 @@ function buildManualSku() {
   const area = String(data.get("area") || "").trim();
   if (!description || !type || !measure || !ownership || !area) return "";
   const ownershipCode = ownership === "Linde" ? "LN" : ownership === "GTS" ? "GTS" : ownership;
-  const areaCode = area === "Area 1" ? "A1" : area === "Area 2" ? "A2" : area === "Area 3" ? "A3" : area;
-  return [description, type, measure, ownershipCode, areaCode].join("-");
+  return [description, type, measure, ownershipCode].join("-");
 }
 function updateManualPreview() {
   if (!manualItemForm) return;
