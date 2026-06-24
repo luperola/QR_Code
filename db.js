@@ -97,10 +97,20 @@ export async function initDb() {
       last_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS item_template_options (
+      id BIGSERIAL PRIMARY KEY,
+      category TEXT NOT NULL,
+      value TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(category, value)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_bom_rows_bom ON bom_rows(bom_id);
     CREATE INDEX IF NOT EXISTS idx_bom_rows_sku ON bom_rows(sku);
     CREATE INDEX IF NOT EXISTS idx_stock_reservations_sku ON stock_reservations(sku);
     CREATE INDEX IF NOT EXISTS idx_printed_labels_last ON printed_labels(last_printed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_item_template_options_category
+      ON item_template_options(category);
     ALTER TABLE bom_rows DROP CONSTRAINT IF EXISTS bom_rows_bom_id_sku_key;
    
    ALTER TABLE movements ADD COLUMN IF NOT EXISTS equipment TEXT;
@@ -293,6 +303,98 @@ export async function listItems() {
     ORDER BY created_at DESC
   `);
   return rows;
+}
+
+export async function seedItemTemplateOptions(optionsByCategory = {}) {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS n FROM item_template_options`,
+  );
+  if (rows[0].n > 0) return false;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const categories = [];
+    const optionValues = [];
+    for (const [category, categoryValues] of Object.entries(optionsByCategory)) {
+      for (const value of categoryValues || []) {
+        const cleanValue = String(value || "").trim();
+        if (!cleanValue) continue;
+        categories.push(category);
+        optionValues.push(cleanValue);
+      }
+    }
+    if (optionValues.length) {
+      await client.query(
+        `INSERT INTO item_template_options (category, value)
+         SELECT category, value
+         FROM UNNEST($1::text[], $2::text[]) AS option(category, value)
+         ON CONFLICT(category, value) DO NOTHING`,
+        [categories, optionValues],
+      );
+    }
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listItemTemplateOptions() {
+  const { rows } = await db.query(
+    `SELECT id, category, value
+     FROM item_template_options
+     ORDER BY category, UPPER(value), value`,
+  );
+  return rows;
+}
+
+export async function addItemTemplateOption({ category, value }) {
+  const cleanValue = String(value || "").trim();
+  if (!cleanValue) return false;
+  const { rowCount } = await db.query(
+    `INSERT INTO item_template_options (category, value)
+     SELECT $1, $2
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM item_template_options
+       WHERE category=$1 AND UPPER(TRIM(value))=UPPER(TRIM($2))
+     )
+     ON CONFLICT(category, value) DO NOTHING`,
+    [category, cleanValue],
+  );
+  return rowCount > 0;
+}
+
+export async function deleteItemTemplateOption({ id, category }) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const countResult = await client.query(
+      `SELECT COUNT(*)::int AS n
+       FROM item_template_options
+       WHERE category=$1`,
+      [category],
+    );
+    if (countResult.rows[0].n <= 1) {
+      await client.query("ROLLBACK");
+      return { deleted: false, reason: "last_option" };
+    }
+    const result = await client.query(
+      `DELETE FROM item_template_options WHERE id=$1 AND category=$2`,
+      [id, category],
+    );
+    await client.query("COMMIT");
+    return { deleted: result.rowCount > 0, reason: "" };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getItemById(id) {

@@ -51,6 +51,10 @@ import {
   matchBomRowToMultipleItems,
   markLabelsPrinted,
   listPrintedLabels,
+  seedItemTemplateOptions,
+  listItemTemplateOptions,
+  addItemTemplateOption,
+  deleteItemTemplateOption,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -312,7 +316,16 @@ function templateMenuOptions() {
   };
 }
 
-function stockTemplateMenuOptions() {
+const STOCK_TEMPLATE_CATEGORIES = {
+  descriptions: { label: "Descrizione", column: "B", columnIndex: 1 },
+  types: { label: "Tipo", column: "C", columnIndex: 2 },
+  measures: { label: "Misura / Diametro", column: "D", columnIndex: 3 },
+  ownerships: { label: "Proprietà", column: "J", columnIndex: 9 },
+  areas: { label: "Area", column: "K", columnIndex: 10 },
+  uoms: { label: "U.M.", column: "L", columnIndex: 11 },
+};
+
+function stockTemplateMenuOptionsFromFile() {
   const templatePath = path.join(__dirname, "Template Stock.xlsx");
   const workbook = XLSX.readFile(templatePath);
   const sheet = workbook.Sheets.Liste;
@@ -337,6 +350,73 @@ function stockTemplateMenuOptions() {
     areas: columnValues(10),
     uoms: columnValues(11),
   };
+}
+
+function groupTemplateOptions(rows = []) {
+  const grouped = Object.fromEntries(
+    Object.keys(STOCK_TEMPLATE_CATEGORIES).map((category) => [category, []]),
+  );
+  for (const row of rows) {
+    if (grouped[row.category]) grouped[row.category].push(row.value);
+  }
+  return grouped;
+}
+
+async function stockTemplateMenuOptions() {
+  const rows = await listItemTemplateOptions();
+  return rows.length ? groupTemplateOptions(rows) : stockTemplateMenuOptionsFromFile();
+}
+
+let templateSyncPromise = Promise.resolve();
+
+function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
+  const templatePath = outputPath || path.join(__dirname, "Template Stock.xlsx");
+  templateSyncPromise = templateSyncPromise.then(async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
+    const listSheet = workbook.getWorksheet("Liste");
+    const inputSheet = workbook.getWorksheet("Input");
+    if (!listSheet || !inputSheet) {
+      throw new Error("Template Stock.xlsx deve contenere i fogli Input e Liste.");
+    }
+
+    const validationFormulaByInputColumn = {};
+    const inputColumnByCategory = {
+      descriptions: "A",
+      types: "B",
+      measures: "C",
+      ownerships: "D",
+      areas: "E",
+      uoms: "G",
+    };
+
+    for (const [category, config] of Object.entries(STOCK_TEMPLATE_CATEGORIES)) {
+      const values = optionsByCategory[category] || [];
+      const lastRowToClear = Math.max(listSheet.rowCount, values.length + 1);
+      for (let row = 2; row <= lastRowToClear; row++) {
+        listSheet.getCell(`${config.column}${row}`).value = null;
+      }
+      values.forEach((value, index) => {
+        listSheet.getCell(`${config.column}${index + 2}`).value = value;
+      });
+      const lastValueRow = Math.max(2, values.length + 1);
+      validationFormulaByInputColumn[inputColumnByCategory[category]] =
+        `Liste!$${config.column}$2:$${config.column}$${lastValueRow}`;
+    }
+
+    for (const [column, formula] of Object.entries(validationFormulaByInputColumn)) {
+      for (let row = 2; row <= 501; row++) {
+        inputSheet.getCell(`${column}${row}`).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [formula],
+        };
+      }
+    }
+
+    await workbook.xlsx.writeFile(templatePath);
+  });
+  return templateSyncPromise;
 }
 
 function selectOptions(values = [], selected = "") {
@@ -1001,7 +1081,7 @@ applyStockSearch();
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
   const canDeleteItems = req.user?.role === "admin";
-  const menus = stockTemplateMenuOptions();
+  const menus = await stockTemplateMenuOptions();
   const manualError = String(req.query.manual_error || "");
   const manualCreated = String(req.query.manual_created || "");
   const importError = String(req.query.import_error || "");
@@ -1082,7 +1162,14 @@ ${clearMessage}
   </div>
 
   <div class="card pad">
-    <h2>Aggiungi item</h2>
+    <div class="row" style="justify-content:space-between; margin-top:0">
+      <h2>Aggiungi item</h2>
+      ${
+        canDeleteItems
+          ? `<a class="btn secondary" href="/items/template-options">Gestisci voci dei menu</a>`
+          : ""
+      }
+    </div>
     <form id="manualItemForm" method="post" action="/items">
       <div class="form-grid">
         <label>Descrizione<input name="description" list="descriptionOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
@@ -1190,6 +1277,143 @@ updateManualPreview();
 </html>`);
 });
 
+app.get("/items/template-options", requireAdmin, async (req, res) => {
+  const optionRows = await listItemTemplateOptions();
+  const groupedRows = Object.fromEntries(
+    Object.keys(STOCK_TEMPLATE_CATEGORIES).map((category) => [category, []]),
+  );
+  for (const row of optionRows) {
+    if (groupedRows[row.category]) groupedRows[row.category].push(row);
+  }
+
+  const error = String(req.query.error || "");
+  const saved = String(req.query.saved || "") === "1";
+  const message = error
+    ? `<div class="flash err">${escapeHtml(error)}</div>`
+    : saved
+      ? `<div class="flash ok">Liste aggiornate. Anche il template da scaricare è stato aggiornato.</div>`
+      : "";
+
+  const sections = Object.entries(STOCK_TEMPLATE_CATEGORIES)
+    .map(([category, config]) => {
+      const rows = groupedRows[category] || [];
+      return `
+        <section class="card pad">
+          <h2>${escapeHtml(config.label)}</h2>
+          <form method="post" action="/items/template-options/add" class="row">
+            <input type="hidden" name="category" value="${escapeHtml(category)}" />
+            <input name="value" required placeholder="Nuova voce" style="min-width:260px" />
+            <button class="btn ok" type="submit">Aggiungi</button>
+          </form>
+          <div class="table-wrap" style="margin-top:12px; max-height:360px">
+            <table>
+              <thead><tr><th>Voce</th><th>Azione</th></tr></thead>
+              <tbody>
+                ${rows
+                  .map(
+                    (row) => `
+                    <tr>
+                      <td>${escapeHtml(row.value)}</td>
+                      <td>
+                        <form method="post" action="/items/template-options/delete" onsubmit="return confirm('Eliminare questa voce dal menu e dal template?');">
+                          <input type="hidden" name="id" value="${Number(row.id)}" />
+                          <input type="hidden" name="category" value="${escapeHtml(category)}" />
+                          <button class="btn danger" type="submit">Elimina</button>
+                        </form>
+                      </td>
+                    </tr>`,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>`;
+    })
+    .join("");
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gestisci voci menu • QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "items")}
+<main class="container">
+  <div class="row" style="justify-content:space-between">
+    <h1>Gestisci voci dei menu</h1>
+    <a class="btn secondary" href="/items">Torna a Items</a>
+  </div>
+  <p class="muted">Le modifiche aggiornano sia “Aggiungi item” sia il file Template Stock.xlsx scaricabile.</p>
+  ${message}
+  <div class="template-options-grid">
+    ${sections}
+  </div>
+</main>
+</body>
+</html>`);
+});
+
+app.post("/items/template-options/add", requireAdmin, async (req, res) => {
+  const category = String(req.body?.category || "").trim();
+  const value = String(req.body?.value || "").trim();
+  if (!STOCK_TEMPLATE_CATEGORIES[category] || !value) {
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent("Categoria o voce non valida.")}`,
+    );
+  }
+
+  const added = await addItemTemplateOption({ category, value });
+  if (!added) {
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent("Questa voce è già presente nel menu.")}`,
+    );
+  }
+
+  try {
+    await syncStockTemplateWorkbook(await stockTemplateMenuOptions());
+    return res.redirect("/items/template-options?saved=1");
+  } catch (error) {
+    console.error("Template Stock sync failed after add", error);
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent("Voce salvata, ma il file Excel non è stato aggiornato. Chiudi il file se è aperto e riprova.")}`,
+    );
+  }
+});
+
+app.post("/items/template-options/delete", requireAdmin, async (req, res) => {
+  const category = String(req.body?.category || "").trim();
+  const id = Number(req.body?.id);
+  if (!STOCK_TEMPLATE_CATEGORIES[category] || !Number.isFinite(id)) {
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent("Voce non valida.")}`,
+    );
+  }
+
+  const result = await deleteItemTemplateOption({ id, category });
+  if (!result.deleted) {
+    const error =
+      result.reason === "last_option"
+        ? "Non puoi eliminare l’ultima voce disponibile di un menu."
+        : "Voce non trovata.";
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent(error)}`,
+    );
+  }
+
+  try {
+    await syncStockTemplateWorkbook(await stockTemplateMenuOptions());
+    return res.redirect("/items/template-options?saved=1");
+  } catch (error) {
+    console.error("Template Stock sync failed after delete", error);
+    return res.redirect(
+      `/items/template-options?error=${encodeURIComponent("Voce eliminata, ma il file Excel non è stato aggiornato. Chiudi il file se è aperto e riprova.")}`,
+    );
+  }
+});
+
 app.post("/items/:id/delete", requireAdmin, async (req, res) => {
   const itemId = Number(req.params.id);
   if (!Number.isFinite(itemId) || itemId <= 0) {
@@ -1200,7 +1424,7 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
 });
 
 app.post("/items", requireAuth, async (req, res) => {
-  const menus = stockTemplateMenuOptions();
+  const menus = await stockTemplateMenuOptions();
   const requiredTemplateValues = [
     ["Descrizione", req.body?.description, menus.descriptions],
     ["Tipo", req.body?.type, menus.types],
@@ -3441,6 +3665,7 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
 
 app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
   const templatePath = path.join(__dirname, "Template Stock.xlsx");
+  await syncStockTemplateWorkbook(await stockTemplateMenuOptions());
   const fileBuffer = await readFile(templatePath);
 
   res.setHeader(
@@ -3460,6 +3685,7 @@ const PORT = process.env.PORT || 3000;
 
 (async () => {
   await initDb();
+  await seedItemTemplateOptions(stockTemplateMenuOptionsFromFile());
 
   app.listen(PORT, "0.0.0.0", async () => {
     const url = `http://localhost:${PORT}`;
