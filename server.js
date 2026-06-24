@@ -368,17 +368,107 @@ async function stockTemplateMenuOptions() {
 }
 
 let templateSyncPromise = Promise.resolve();
+let bomTemplateSyncPromise = Promise.resolve();
+
+function syncBomTemplateWorkbook(optionsByCategory) {
+  const templatePath = path.join(__dirname, "Template_BOQ.xlsx");
+  bomTemplateSyncPromise = bomTemplateSyncPromise
+    .catch(() => {})
+    .then(async () => {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(templatePath);
+      const listSheet = workbook.getWorksheet("Liste");
+      const inputSheet = workbook.getWorksheet("Input");
+      if (!listSheet || !inputSheet) {
+        throw new Error("Template_BOQ.xlsx deve contenere i fogli Input e Liste.");
+      }
+
+    const stockColumns = [
+      { category: "descriptions", inputColumn: "B", listColumn: "B", header: "Descrizione" },
+      { category: "types", inputColumn: "C", listColumn: "C", header: "Tipo" },
+      {
+        category: "measures",
+        inputColumn: "D",
+        listColumn: "D",
+        header: "Misura / Diametro",
+      },
+      {
+        category: "ownerships",
+        inputColumn: "E",
+        listColumn: "E",
+        header: "Proprietà",
+      },
+    ];
+
+    inputSheet.getColumn("E").width = inputSheet.getColumn("D").width;
+    listSheet.getColumn("E").width = listSheet.getColumn("D").width;
+    for (let row = 1; row <= 501; row++) {
+      inputSheet.getCell(`E${row}`).style = JSON.parse(
+        JSON.stringify(inputSheet.getCell(`D${row}`).style || {}),
+      );
+    }
+    for (let row = 1; row <= Math.max(106, listSheet.rowCount); row++) {
+      listSheet.getCell(`E${row}`).style = JSON.parse(
+        JSON.stringify(listSheet.getCell(`D${row}`).style || {}),
+      );
+    }
+
+    inputSheet.getCell("A1").value = "Linea";
+    const lineValues = [];
+    for (let row = 2; row <= listSheet.rowCount; row++) {
+      const value = String(listSheet.getCell(`A${row}`).value || "").trim();
+      if (value) lineValues.push(value);
+    }
+
+    for (const column of stockColumns) {
+      inputSheet.getCell(`${column.inputColumn}1`).value = column.header;
+      listSheet.getCell(`${column.listColumn}1`).value =
+        `Menu colonna ${column.inputColumn}`;
+      const values = optionsByCategory[column.category] || [];
+      const lastRowToClear = Math.max(listSheet.rowCount, values.length + 1);
+      for (let row = 2; row <= lastRowToClear; row++) {
+        listSheet.getCell(`${column.listColumn}${row}`).value = null;
+      }
+      values.forEach((value, index) => {
+        listSheet.getCell(`${column.listColumn}${index + 2}`).value = value;
+      });
+    }
+
+    for (let row = 2; row <= 501; row++) {
+      inputSheet.getCell(`A${row}`).dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: [`Liste!$A$2:$A$${Math.max(2, lineValues.length + 1)}`],
+      };
+      for (const column of stockColumns) {
+        const values = optionsByCategory[column.category] || [];
+        inputSheet.getCell(`${column.inputColumn}${row}`).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [
+            `Liste!$${column.listColumn}$2:$${column.listColumn}$${Math.max(2, values.length + 1)}`,
+          ],
+        };
+      }
+    }
+
+      await workbook.xlsx.writeFile(templatePath);
+    });
+  return bomTemplateSyncPromise;
+}
 
 function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
   const templatePath = outputPath || path.join(__dirname, "Template Stock.xlsx");
-  templateSyncPromise = templateSyncPromise.then(async () => {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(templatePath);
-    const listSheet = workbook.getWorksheet("Liste");
-    const inputSheet = workbook.getWorksheet("Input");
-    if (!listSheet || !inputSheet) {
-      throw new Error("Template Stock.xlsx deve contenere i fogli Input e Liste.");
-    }
+  templateSyncPromise = templateSyncPromise
+    .catch(() => {})
+    .then(async () => {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(templatePath);
+      const listSheet = workbook.getWorksheet("Liste");
+      const inputSheet = workbook.getWorksheet("Input");
+      if (!listSheet || !inputSheet) {
+        throw new Error("Template Stock.xlsx deve contenere i fogli Input e Liste.");
+      }
 
     const validationFormulaByInputColumn = {};
     const inputColumnByCategory = {
@@ -414,8 +504,9 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
       }
     }
 
-    await workbook.xlsx.writeFile(templatePath);
-  });
+      await workbook.xlsx.writeFile(templatePath);
+      await syncBomTemplateWorkbook(optionsByCategory);
+    });
   return templateSyncPromise;
 }
 
@@ -1637,7 +1728,10 @@ ${nav(req, "bom")}
 <main class="container">
   <h1>BOM per equipment</h1>
   <div class="card pad">
-    <h2>BOM attivi</h2>
+    <div class="row" style="justify-content:space-between; margin-top:0">
+      <h2>BOM attivi</h2>
+      <a class="btn secondary" href="/export/bom-template.xlsx">BOM template</a>
+    </div>
     <label>Seleziona BOM equipment
       <select id="activeBomSelect">
         <option value="">-- Apri BOM --</option>
@@ -3675,6 +3769,23 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="Template Stock.xlsx"`,
+  );
+  res.send(fileBuffer);
+});
+
+app.get("/export/bom-template.xlsx", requireAuth, async (req, res) => {
+  const templatePath = path.join(__dirname, "Template_BOQ.xlsx");
+  const options = await stockTemplateMenuOptions();
+  await syncBomTemplateWorkbook(options);
+  const fileBuffer = await readFile(templatePath);
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="Template_BOQ.xlsx"`,
   );
   res.send(fileBuffer);
 });
