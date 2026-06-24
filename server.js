@@ -3377,7 +3377,7 @@ app.get("/export/movements.xlsx", requireAuth, async (req, res) => {
 });
 
 app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
-  const templatePath = path.join(__dirname, "Template_ORIGINAL.xlsx");
+  const templatePath = path.join(__dirname, "Template Stock.xlsx");
   const fileBuffer = await readFile(templatePath);
 
   res.setHeader(
@@ -3386,7 +3386,7 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
   );
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="Template_ORIGINAL.xlsx"`,
+    `attachment; filename="Template Stock.xlsx"`,
   );
   res.send(fileBuffer);
 });
