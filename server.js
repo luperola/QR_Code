@@ -388,28 +388,36 @@ function syncBomTemplateWorkbook(optionsByCategory) {
       { category: "types", inputColumn: "C", listColumn: "C", header: "Tipo" },
       {
         category: "measures",
-        inputColumn: "D",
+        inputColumn: "F",
         listColumn: "D",
         header: "Misura / Diametro",
       },
       {
         category: "ownerships",
-        inputColumn: "E",
+        inputColumn: "G",
         listColumn: "E",
         header: "Proprietà",
       },
     ];
 
-    inputSheet.getColumn("E").width = inputSheet.getColumn("D").width;
-    inputSheet.getColumn("F").width = 42;
+    inputSheet.getColumn("D").width = 10;
+    inputSheet.getColumn("E").width = 12;
+    inputSheet.getColumn("F").width = 33;
+    inputSheet.getColumn("G").width = 20;
+    inputSheet.getColumn("H").width = 42;
     listSheet.getColumn("E").width = listSheet.getColumn("D").width;
     for (let row = 1; row <= 501; row++) {
-      inputSheet.getCell(`E${row}`).style = JSON.parse(
-        JSON.stringify(inputSheet.getCell(`D${row}`).style || {}),
+      const baseStyle = JSON.parse(
+        JSON.stringify(inputSheet.getCell(`C${row}`).style || {}),
       );
-      inputSheet.getCell(`F${row}`).style = JSON.parse(
-        JSON.stringify(inputSheet.getCell(`E${row}`).style || {}),
-      );
+      for (const column of ["D", "E", "F", "G", "H"]) {
+        const cell = inputSheet.getCell(`${column}${row}`);
+        cell.value = null;
+        cell.dataValidation = {};
+        cell.style = JSON.parse(
+          JSON.stringify(baseStyle),
+        );
+      }
     }
     for (let row = 1; row <= Math.max(106, listSheet.rowCount); row++) {
       listSheet.getCell(`E${row}`).style = JSON.parse(
@@ -418,7 +426,9 @@ function syncBomTemplateWorkbook(optionsByCategory) {
     }
 
     inputSheet.getCell("A1").value = "Linea";
-    inputSheet.getCell("F1").value = "SKU";
+    inputSheet.getCell("D1").value = "u.m.";
+    inputSheet.getCell("E1").value = "Q.tà";
+    inputSheet.getCell("H1").value = "SKU";
     const lineValues = [];
     for (let row = 2; row <= listSheet.rowCount; row++) {
       const value = String(listSheet.getCell(`A${row}`).value || "").trim();
@@ -455,10 +465,21 @@ function syncBomTemplateWorkbook(optionsByCategory) {
           ],
         };
       }
-      inputSheet.getCell(`F${row}`).value = {
+      inputSheet.getCell(`D${row}`).value = {
+        formula: `IF(B${row}="","",IF(UPPER(TRIM(B${row}))="TUBO","mt","pz"))`,
+      };
+      inputSheet.getCell(`E${row}`).value = null;
+      inputSheet.getCell(`E${row}`).numFmt = "0.00";
+      inputSheet.getCell(`E${row}`).dataValidation = {
+        type: "decimal",
+        operator: "greaterThanOrEqual",
+        allowBlank: true,
+        formulae: [0],
+      };
+      inputSheet.getCell(`H${row}`).value = {
         formula:
-          `IF(OR(B${row}="",C${row}="",D${row}="",E${row}=""),"",` +
-          `B${row}&"-"&C${row}&"-"&D${row}&"-"&IF(E${row}="Linde","LN",IF(E${row}="GTS","GTS",E${row})))`,
+          `IF(OR(B${row}="",C${row}="",F${row}="",G${row}=""),"",` +
+          `B${row}&"-"&C${row}&"-"&F${row}&"-"&IF(G${row}="Linde","LN",IF(G${row}="GTS","GTS",G${row})))`,
       };
     }
 
