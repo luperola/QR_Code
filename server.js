@@ -350,6 +350,12 @@ function selectOptions(values = [], selected = "") {
     .join("");
 }
 
+function dataListOptions(values = []) {
+  return values
+    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
+    .join("");
+}
+
 function buildSkuFromTemplateFields(fields = {}) {
   const familyCode = codeBeforeDash(fields.family);
   if (!familyCode) return "";
@@ -1079,17 +1085,23 @@ ${clearMessage}
     <h2>Aggiungi item</h2>
     <form id="manualItemForm" method="post" action="/items">
       <div class="form-grid">
-        <label>Descrizione<select name="description" required>${selectOptions(menus.descriptions)}</select></label>
-        <label>Tipo<select name="type" required>${selectOptions(menus.types)}</select></label>
-        <label>Misura / Diametro<select name="measure" required>${selectOptions(menus.measures)}</select></label>
-        <label>Proprietà<select name="ownership" required>${selectOptions(menus.ownerships)}</select></label>
-        <label>Area<select name="area" required>${selectOptions(menus.areas)}</select></label>
+        <label>Descrizione<input name="description" list="descriptionOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
+        <label>Tipo<input name="type" list="typeOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
+        <label>Misura / Diametro<input name="measure" list="measureOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
+        <label>Proprietà<input name="ownership" list="ownershipOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
+        <label>Area<input name="area" list="areaOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
         <label>Giacenza<input name="initial_qty" type="number" step="1" min="0" value="0" required /></label>
-        <label>U.M.<select name="uom" required>${selectOptions(menus.uoms)}</select></label>
+        <label>U.M.<input name="uom" list="uomOptions" autocomplete="off" required placeholder="Digita per cercare..." /></label>
         <label>Valore unitario<input name="unit_cost" type="number" step="0.01" min="0" value="0" required /></label>
         <label>Valore<input id="manualValuePreview" readonly value="0.00" /></label>
         <label class="span2">SKU generato<input id="manualSkuPreview" readonly /></label>
       </div>
+      <datalist id="descriptionOptions">${dataListOptions(menus.descriptions)}</datalist>
+      <datalist id="typeOptions">${dataListOptions(menus.types)}</datalist>
+      <datalist id="measureOptions">${dataListOptions(menus.measures)}</datalist>
+      <datalist id="ownershipOptions">${dataListOptions(menus.ownerships)}</datalist>
+      <datalist id="areaOptions">${dataListOptions(menus.areas)}</datalist>
+      <datalist id="uomOptions">${dataListOptions(menus.uoms)}</datalist>
       <div class="row">
         <button class="btn" type="submit">Salva</button>
         <a class="btn secondary" href="/labels">Stampa QR</a>
@@ -1188,6 +1200,25 @@ app.post("/items/:id/delete", requireAdmin, async (req, res) => {
 });
 
 app.post("/items", requireAuth, async (req, res) => {
+  const menus = stockTemplateMenuOptions();
+  const requiredTemplateValues = [
+    ["Descrizione", req.body?.description, menus.descriptions],
+    ["Tipo", req.body?.type, menus.types],
+    ["Misura / Diametro", req.body?.measure, menus.measures],
+    ["Proprietà", req.body?.ownership, menus.ownerships],
+    ["Area", req.body?.area, menus.areas],
+    ["U.M.", req.body?.uom, menus.uoms],
+  ];
+  const invalidField = requiredTemplateValues.find(
+    ([, value, allowed]) =>
+      !allowed.includes(String(value || "").trim()),
+  );
+  if (invalidField) {
+    return res.redirect(
+      `/items?manual_error=${encodeURIComponent(`${invalidField[0]}: scegli una voce presente nel menu del template.`)}`,
+    );
+  }
+
   const item = manualTemplateItemFromBody(req.body || {});
   if (!item.sku || !item.description || !item.family) {
     return res.redirect(

@@ -165,6 +165,10 @@ textarea {
   grid-column: span 2;
 }
 
+#manualItemForm datalist option {
+  color: #000;
+}
+
 .row {
   display: flex;
   gap: 10px;
