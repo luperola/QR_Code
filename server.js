@@ -312,6 +312,33 @@ function templateMenuOptions() {
   };
 }
 
+function stockTemplateMenuOptions() {
+  const templatePath = path.join(__dirname, "Template Stock.xlsx");
+  const workbook = XLSX.readFile(templatePath);
+  const sheet = workbook.Sheets.Liste;
+  if (!sheet) return {};
+
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const columnValues = (columnIndex) =>
+    Array.from(
+      new Set(
+        rows
+          .slice(1)
+          .map((row) => String(row[columnIndex] || "").trim())
+          .filter(Boolean),
+      ),
+    );
+
+  return {
+    descriptions: columnValues(1),
+    types: columnValues(2),
+    measures: columnValues(3),
+    ownerships: columnValues(9),
+    areas: columnValues(10),
+    uoms: columnValues(11),
+  };
+}
+
 function selectOptions(values = [], selected = "") {
   return [`<option value="">-- Seleziona --</option>`]
     .concat(
@@ -389,34 +416,52 @@ function buildSkuFromTemplateFields(fields = {}) {
   return parts.filter(Boolean).join("-");
 }
 
+function buildStockSku(fields = {}) {
+  const description = String(fields.description || "").trim();
+  const type = String(fields.type || "").trim();
+  const measure = String(fields.measure || "").trim();
+  const ownership = String(fields.ownership || "").trim();
+  const area = String(fields.area || "").trim();
+  if (!description || !type || !measure || !ownership || !area) return "";
+
+  const ownershipCode =
+    ownership === "Linde" ? "LN" : ownership === "GTS" ? "GTS" : ownership;
+  const areaCode =
+    area === "Area 1"
+      ? "A1"
+      : area === "Area 2"
+        ? "A2"
+        : area === "Area 3"
+          ? "A3"
+          : area;
+
+  return [description, type, measure, ownershipCode, areaCode].join("-");
+}
+
 function manualTemplateItemFromBody(body = {}) {
-  const family = String(body.family || "").trim();
-  const series = String(body.series || "").trim();
   const uomRaw = String(body.uom || "").trim();
   const initialQty = Number(String(body.initial_qty || "0").replace(",", "."));
   const unitCost = roundExcel(parseEuroNumber(body.unit_cost), 2);
-  const valueAmountRaw = body.value_amount;
   const calculatedValue = roundExcel(
     (Number.isFinite(initialQty) ? initialQty : 0) * unitCost,
     2,
   );
 
   return {
-    sku: buildSkuFromTemplateFields(body),
+    sku: buildStockSku(body),
     description: String(body.description || "").trim(),
-    family: textAfterDash(family),
-    subfamily: textAfterDash(series),
+    family: String(body.type || "").trim(),
+    subfamily: String(body.measure || "").trim(),
     lot: "DEFAULT",
     entry_date: null,
-    uom: codeBeforeDash(uomRaw) || "PC",
+    uom: uomRaw || "pz",
     initial_qty: Number.isFinite(initialQty) ? initialQty : 0,
-    value_amount:
-      valueAmountRaw === undefined || valueAmountRaw === ""
-        ? calculatedValue
-        : roundExcel(parseEuroNumber(valueAmountRaw), 2),
+    value_amount: calculatedValue,
     unit_cost: unitCost,
-    dimension_1: String(body.od_ext || "").trim(),
-    dimension_2: String(body.thickness || "").trim(),
+    dimension_1: String(body.measure || "").trim(),
+    dimension_2: "",
+    ownership: String(body.ownership || "").trim(),
+    stock_area: String(body.area || "").trim(),
   };
 }
 
@@ -585,7 +630,9 @@ function parseItemsFromWorksheet(workbook) {
   const rows = sheetCandidates[0]?.rows || [];
 
   return rows.map((row) => {
-    const family = menuDisplayValue(importText(getValue(row, "Famiglia", "Family")));
+    const family = menuDisplayValue(
+      importText(getValue(row, "Famiglia", "Family", "Tipo", "Type")),
+    );
     const dimension_1 = String(
       getValue(
         row,
@@ -594,6 +641,8 @@ function parseItemsFromWorksheet(workbook) {
         "Dimension 1",
         "OD",
         "Diametro",
+        "Misura / Diametro",
+        "Misura",
       ),
     ).trim();
     const dimension_2 = String(
@@ -607,8 +656,20 @@ function parseItemsFromWorksheet(workbook) {
       ),
     ).trim();
     const subfamily = menuDisplayValue(importText(
-      getValue(row, "Serie", "Sottofamiglia", "Sotto famiglia", "Subfamily"),
+      getValue(
+        row,
+        "Serie",
+        "Sottofamiglia",
+        "Sotto famiglia",
+        "Subfamily",
+        "Misura / Diametro",
+        "Misura",
+      ),
     ));
+    const ownership = importText(
+      getValue(row, "Proprietà", "Proprieta", "Ownership"),
+    );
+    const stock_area = importText(getValue(row, "Area", "Stock Area"));
     const sku = skuFromImportRow(row, sheetCandidates[0]?.sheetName || "");
     const description = importText(
       getValue(row, "Description", "Descrizione"),
@@ -666,6 +727,7 @@ function parseItemsFromWorksheet(workbook) {
       "CostoUnitario",
       "Cost Unit",
       "Unit Cost",
+      "Valore unitario",
     );
     const unit_cost = roundExcel(parseEuroNumber(unitCostRaw), 2);
 
@@ -682,6 +744,8 @@ function parseItemsFromWorksheet(workbook) {
       unit_cost: Number.isFinite(unit_cost) ? unit_cost : 0,
       dimension_1,
       dimension_2,
+      ownership,
+      stock_area,
     };
   });
 }
@@ -931,7 +995,7 @@ applyStockSearch();
 app.get("/items", requireAuth, async (req, res) => {
   const items = await listItems();
   const canDeleteItems = req.user?.role === "admin";
-  const menus = templateMenuOptions();
+  const menus = stockTemplateMenuOptions();
   const manualError = String(req.query.manual_error || "");
   const manualCreated = String(req.query.manual_created || "");
   const importError = String(req.query.import_error || "");
@@ -955,6 +1019,8 @@ app.get("/items", requireAuth, async (req, res) => {
       <td>${escapeHtml(it.description)}</td>
       <td>${escapeHtml(it.family || "")}</td>
       <td>${escapeHtml(it.subfamily || "")}</td>
+      <td>${escapeHtml(it.ownership || "")}</td>
+      <td>${escapeHtml(it.stock_area || "")}</td>
       <td style="text-align:right">${it.initial_qty ?? 0}</td>
       <td>${escapeHtml(it.uom || "")}</td>
       <td>
@@ -1013,24 +1079,16 @@ ${clearMessage}
     <h2>Aggiungi item</h2>
     <form id="manualItemForm" method="post" action="/items">
       <div class="form-grid">
-        <label class="span2">Descrizione<input name="description" required placeholder="es. ULTRON TUBE EP 1/2&quot; (mm 12.7x1.24) cod. U-08" /></label>
-        <label>Famiglia<select name="family" required>${selectOptions(menus.family)}</select></label>
-        <label>Serie<select name="series">${selectOptions(menus.series)}</select></label>
-        <label>Materiale<select name="material">${selectOptions(menus.material)}</select></label>
-        <label>OD int/min per coax/rid/tees in inches<input name="od_int" placeholder="es. 1/4&quot;" /></label>
-        <label>OD est per tubi (in per SS, mm per plastica)<input name="od_ext" placeholder="es. 1/2&quot;" /></label>
-        <label>Spessore<input name="thickness" placeholder="es. 1,24" /></label>
-        <label>Connessione<select name="connection">${selectOptions(menus.connection)}</select></label>
-        <label>Finitura<select name="finish">${selectOptions(menus.finish)}</select></label>
-        <label>Brand<select name="brand">${selectOptions(menus.brand)}</select></label>
-        <label>Modello<input name="model" /></label>
-        <label>Lunghezza (mm)<input name="length_mm" type="number" step="0.01" /></label>
-        <label>Giacenza<input name="initial_qty" type="number" step="0.01" value="0" /></label>
-        <label>u.m.<select name="uom">${selectOptions(menus.uom)}</select></label>
-        <label>Costo unitario<input name="unit_cost" type="number" step="0.01" value="0" /></label>
-        <label>Valore<input id="manualValuePreview" name="value_amount" readonly value="0" /></label>
+        <label>Descrizione<select name="description" required>${selectOptions(menus.descriptions)}</select></label>
+        <label>Tipo<select name="type" required>${selectOptions(menus.types)}</select></label>
+        <label>Misura / Diametro<select name="measure" required>${selectOptions(menus.measures)}</select></label>
+        <label>Proprietà<select name="ownership" required>${selectOptions(menus.ownerships)}</select></label>
+        <label>Area<select name="area" required>${selectOptions(menus.areas)}</select></label>
+        <label>Giacenza<input name="initial_qty" type="number" step="1" min="0" value="0" required /></label>
+        <label>U.M.<select name="uom" required>${selectOptions(menus.uoms)}</select></label>
+        <label>Valore unitario<input name="unit_cost" type="number" step="0.01" min="0" value="0" required /></label>
+        <label>Valore<input id="manualValuePreview" readonly value="0.00" /></label>
         <label class="span2">SKU generato<input id="manualSkuPreview" readonly /></label>
-        <label class="span2">Note<input name="note" /></label>
       </div>
       <div class="row">
         <button class="btn" type="submit">Salva</button>
@@ -1042,7 +1100,7 @@ ${clearMessage}
   <div class="pad">
       <label for="familyFilter">Filtra</label>
       <select id="familyFilter">
-        <option value="">Tutte le serie</option>
+        <option value="">Tutte le misure</option>
         ${Array.from(
           new Set(
             items
@@ -1060,9 +1118,9 @@ ${clearMessage}
     </div>
     <div class="table-wrap">
       <table id="itemsTable">
-        <thead><tr><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Serie</th><th>Giacenza</th><th>u.m.</th><th>Elimina</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Descrizione</th><th>Tipo</th><th>Misura / Diametro</th><th>Proprietà</th><th>Area</th><th>Giacenza</th><th>U.M.</th><th>Elimina</th></tr></thead>
         <tbody id="itemsTableBody">
-            ${rows || `<tr><td colspan="7" class="muted">Nessun item.</td></tr>`}
+            ${rows || `<tr><td colspan="9" class="muted">Nessun item.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1081,62 +1139,21 @@ document.getElementById("familyFilter")?.addEventListener("change", function () 
 const manualItemForm = document.getElementById("manualItemForm");
 const manualSkuPreview = document.getElementById("manualSkuPreview");
 const manualValuePreview = document.getElementById("manualValuePreview");
-function cleanCodePart(value) {
-  const code = codePart(value);
-  return code === "NA" ? "" : code;
-}
-function codePart(value) {
-  return String(value || "").split(/\s*[-–—]\s*/)[0].trim();
-}
+const existingItemSkus = new Set(${JSON.stringify(
+    items.map((item) => String(item.sku || "").trim().toUpperCase()),
+  ).replace(/</g, "\\u003c")});
 function buildManualSku() {
   if (!manualItemForm) return "";
   const data = new FormData(manualItemForm);
-  const family = cleanCodePart(data.get("family"));
-  if (!family) return "";
-  const series = cleanCodePart(data.get("series"));
-  const material = cleanCodePart(data.get("material"));
-  const config = cleanCodePart(data.get("config"));
-  const connection = cleanCodePart(data.get("connection"));
-  const finish = cleanCodePart(data.get("finish"));
-  const brand = cleanCodePart(data.get("brand"));
-  const model = String(data.get("model") || "").trim();
-  const odInt = String(data.get("od_int") || "").trim();
-  const odExt = String(data.get("od_ext") || "").trim();
-  const thickness = String(data.get("thickness") || "").trim();
-  const parts = [family];
-  if (series) parts.push(series);
-  const isTubeLikeFamily = ["TB", "EL45", "EL90", "STR-TEE"].includes(family);
-  const isDoubleDiameterFamily = ["RED-TEE"].includes(family);
-  const isStandardTubeSeries = ["UL", "TCC", "TCC1", "TCC.1", "STD"].includes(series);
-  if (isDoubleDiameterFamily || (isTubeLikeFamily && series === "COAX")) {
-    if (odInt && odExt) parts.push(odInt + " x " + odExt);
-    else if (odExt) parts.push(odExt);
-    if (thickness) parts.push(thickness);
-    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(series) && finish) parts.push(finish);
-    if (brand) parts.push(brand);
-    return parts.filter(Boolean).join("-");
-  }
-  if (family === "TB" || (isTubeLikeFamily && isStandardTubeSeries)) {
-    if (odExt) parts.push(odExt);
-    const odPlain = odExt.replace(/"/g, "");
-    if ((odPlain === "1/2" || odPlain === "3/4") && thickness) parts.push(thickness);
-    if (!["TCC", "TCC1", "TCC.1", "STD"].includes(series) && finish) parts.push(finish);
-    if (brand) parts.push(brand);
-    return parts.filter(Boolean).join("-");
-  }
-  if (material) parts.push(material);
-  if (config) parts.push(config);
-  if (config === "CX") {
-    if (odInt && odExt) parts.push(odInt + "/" + odExt);
-  } else if (odExt) {
-    parts.push(odExt);
-  }
-  if (config !== "CX" && thickness) parts.push(thickness);
-  if (connection) parts.push(connection);
-  if (finish) parts.push(finish);
-  if (brand) parts.push(brand);
-  if (model) parts.push(model);
-  return parts.filter(Boolean).join("-");
+  const description = String(data.get("description") || "").trim();
+  const type = String(data.get("type") || "").trim();
+  const measure = String(data.get("measure") || "").trim();
+  const ownership = String(data.get("ownership") || "").trim();
+  const area = String(data.get("area") || "").trim();
+  if (!description || !type || !measure || !ownership || !area) return "";
+  const ownershipCode = ownership === "Linde" ? "LN" : ownership === "GTS" ? "GTS" : ownership;
+  const areaCode = area === "Area 1" ? "A1" : area === "Area 2" ? "A2" : area === "Area 3" ? "A3" : area;
+  return [description, type, measure, ownershipCode, areaCode].join("-");
 }
 function updateManualPreview() {
   if (!manualItemForm) return;
@@ -1148,6 +1165,13 @@ function updateManualPreview() {
 }
 manualItemForm?.addEventListener("input", updateManualPreview);
 manualItemForm?.addEventListener("change", updateManualPreview);
+manualItemForm?.addEventListener("submit", (event) => {
+  const sku = buildManualSku().toUpperCase();
+  if (sku && existingItemSkus.has(sku)) {
+    event.preventDefault();
+    alert("ATTENZIONE: questo SKU è già presente nello stock. Il nuovo item non è stato aggiunto.");
+  }
+});
 updateManualPreview();
 </script>
 </body>
@@ -1167,17 +1191,17 @@ app.post("/items", requireAuth, async (req, res) => {
   const item = manualTemplateItemFromBody(req.body || {});
   if (!item.sku || !item.description || !item.family) {
     return res.redirect(
-      `/items?manual_error=${encodeURIComponent("Compila almeno descrizione, famiglia e i campi necessari per generare lo SKU.")}`,
+      `/items?manual_error=${encodeURIComponent("Compila Descrizione, Tipo, Misura / Diametro, Proprietà e Area per generare lo SKU.")}`,
     );
   }
 
   const existing = await db.query(
-    `SELECT sku, description FROM items WHERE sku=$1 LIMIT 1`,
+    `SELECT sku, description FROM items WHERE UPPER(TRIM(sku))=UPPER(TRIM($1)) LIMIT 1`,
     [item.sku],
   );
   if (existing.rows[0]) {
     return res.redirect(
-      `/items?manual_error=${encodeURIComponent(`Item equivalente gia presente nello stock: ${item.sku}`)}`,
+      `/items?manual_error=${encodeURIComponent(`ATTENZIONE: lo SKU ${item.sku} è già presente nello stock. Il nuovo item non è stato aggiunto.`)}`,
     );
   }
 
@@ -1213,6 +1237,8 @@ app.post(
           unit_cost,
           dimension_1,
           dimension_2,
+          ownership,
+          stock_area,
         } = parsed;
         if (!sku || !description || !lot) {
           skipped++;
@@ -1232,6 +1258,8 @@ app.post(
           unit_cost,
           dimension_1,
           dimension_2,
+          ownership,
+          stock_area,
         });
         ok++;
       }
@@ -1276,6 +1304,8 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
       unit_cost,
       dimension_1,
       dimension_2,
+      ownership,
+      stock_area,
     } = parsed;
     if (!sku || !description || !lot) {
       skipped++;
@@ -1295,6 +1325,8 @@ app.post("/items/import/default-stock", requireAuth, async (req, res) => {
       unit_cost,
       dimension_1,
       dimension_2,
+      ownership,
+      stock_area,
     });
     ok++;
   }

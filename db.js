@@ -37,6 +37,8 @@ export async function initDb() {
       initial_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
       value_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
       unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      ownership TEXT NOT NULL DEFAULT '',
+      stock_area TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(sku, lot)
@@ -122,6 +124,8 @@ export async function initDb() {
     ALTER TABLE items ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS dimension_1 TEXT NOT NULL DEFAULT '';
     ALTER TABLE items ADD COLUMN IF NOT EXISTS dimension_2 TEXT NOT NULL DEFAULT '';
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS ownership TEXT NOT NULL DEFAULT '';
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS stock_area TEXT NOT NULL DEFAULT '';
     `);
 
   const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM users`);
@@ -225,11 +229,13 @@ export async function upsertItem({
   unit_cost = 0,
   dimension_1 = '',
   dimension_2 = '',
+  ownership = '',
+  stock_area = '',
 }) {
   await db.query(
     `
-    INSERT INTO items (sku, description, family, subfamily, lot, entry_date, uom, initial_qty, value_amount, unit_cost, dimension_1, dimension_2)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    INSERT INTO items (sku, description, family, subfamily, lot, entry_date, uom, initial_qty, value_amount, unit_cost, dimension_1, dimension_2, ownership, stock_area)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     ON CONFLICT(sku, lot) DO UPDATE SET
       description=EXCLUDED.description,
       family=EXCLUDED.family,
@@ -241,6 +247,8 @@ export async function upsertItem({
       unit_cost=EXCLUDED.unit_cost,
       dimension_1=EXCLUDED.dimension_1,
       dimension_2=EXCLUDED.dimension_2,
+      ownership=EXCLUDED.ownership,
+      stock_area=EXCLUDED.stock_area,
       updated_at=NOW()
     `,
     [
@@ -256,6 +264,8 @@ export async function upsertItem({
       unit_cost,
       String(dimension_1 || '').trim(),
       String(dimension_2 || '').trim(),
+      String(ownership || '').trim(),
+      String(stock_area || '').trim(),
     ],
   );
 }
@@ -276,6 +286,8 @@ export async function listItems() {
       unit_cost,
       dimension_1,
       dimension_2,
+      ownership,
+      stock_area,
       created_at
     FROM items
     ORDER BY created_at DESC
