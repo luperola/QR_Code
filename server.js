@@ -3065,13 +3065,13 @@ app.get("/labels", requireAuth, async (req, res) => {
   const rows = items
     .map(
       (it) => `
-      <tr data-search="${escapeHtml([it.sku, it.description, it.family, it.subfamily, it.lot].join(" "))}">
+      <tr data-search="${escapeHtml([it.sku, it.description, it.family, it.subfamily, it.stock_area].join(" "))}">
         <td><input type="checkbox" name="item_id" value="${Number(it.id)}"></td>
         <td class="mono">${escapeHtml(it.sku || "")}</td>
         <td>${escapeHtml(it.description || "")}</td>
         <td>${escapeHtml(it.family || "")}</td>
         <td>${escapeHtml(it.subfamily || "")}</td>
-        <td>${escapeHtml(it.lot || "")}</td>
+        <td>${escapeHtml(it.stock_area || "")}</td>
       </tr>`,
     )
     .join("");
@@ -3090,7 +3090,7 @@ ${nav(req, "labels")}
   <h1>Stampa QR</h1>
   <p class="muted">Scegli quali QR stampare. Puoi selezionare singoli item oppure usare Stampa tutti.</p>
   <div class="row">
-    <input id="labelSearch" placeholder="Cerca SKU, descrizione, famiglia..." />
+    <input id="labelSearch" placeholder="Cerca SKU, descrizione, tipo, dia/mis. o area..." />
     <button class="btn secondary" type="button" onclick="selectVisibleLabels(true)">Seleziona visibili</button>
     <button class="btn secondary" type="button" onclick="selectVisibleLabels(false)">Pulisci</button>
     <a class="btn secondary" href="/labels/printed">QR gia stampati</a>
@@ -3103,7 +3103,7 @@ ${nav(req, "labels")}
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Famiglia</th><th>Sottofamiglia</th><th>Lot</th></tr></thead>
+        <thead><tr><th>Sel.</th><th>SKU</th><th>Descrizione</th><th>Tipo</th><th>Dia/Mis.</th><th>Area</th></tr></thead>
         <tbody id="labelRows">${rows || `<tr><td colspan="6" class="muted">Nessun item.</td></tr>`}</tbody>
       </table>
     </div>
