@@ -535,6 +535,41 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
         throw new Error("Template Stock.xlsx deve contenere i fogli Input e Liste.");
       }
 
+    const stockTemplateColumnWidths = {
+      A: 38.99,
+      B: 18.36,
+      C: 18.54,
+      D: 15.18,
+      E: 12.63,
+      F: 16.08,
+      G: 9.99,
+      H: 15.36,
+      I: 17.99,
+      J: 45.99,
+    };
+    for (const [column, width] of Object.entries(stockTemplateColumnWidths)) {
+      inputSheet.getColumn(column).width = width;
+    }
+
+    for (let row = 502; row <= 800; row++) {
+      inputSheet.getRow(row).height = inputSheet.getRow(501).height;
+      for (let column = 1; column <= 10; column++) {
+        const sourceCell = inputSheet.getCell(501, column);
+        const targetCell = inputSheet.getCell(row, column);
+        targetCell.style = JSON.parse(JSON.stringify(sourceCell.style || {}));
+        targetCell.value = null;
+        targetCell.dataValidation = {};
+      }
+      inputSheet.getCell(`I${row}`).value = {
+        formula: `IF(OR(F${row}="",H${row}=""),"",F${row}*H${row})`,
+      };
+      inputSheet.getCell(`J${row}`).value = {
+        formula:
+          `A${row}&"-"&B${row}&"-"&C${row}&"-"&` +
+          `IF(D${row}="Linde","LN",IF(D${row}="GTS","GTS",D${row}))`,
+      };
+    }
+
     const validationFormulaByInputColumn = {};
     const inputColumnByCategory = {
       descriptions: "A",
@@ -560,7 +595,7 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
     }
 
     for (const [column, formula] of Object.entries(validationFormulaByInputColumn)) {
-      for (let row = 2; row <= 501; row++) {
+      for (let row = 2; row <= 800; row++) {
         inputSheet.getCell(`${column}${row}`).dataValidation = {
           type: "list",
           allowBlank: true,
