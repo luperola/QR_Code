@@ -3051,9 +3051,9 @@ async function labelCardsForItems(items = [], req) {
 
       return `
       <div class="label">
-        <div class="label-description">${escapeHtml(it.description || "")}</div>
+        <div class="mono sku label-sku">${escapeHtml(it.sku || "")}</div>
         <img class="qr" src="${dataUrl}" alt="QR" />
-        <div class="mono sku">${escapeHtml(it.sku || "")}</div>
+        <div class="label-area">${escapeHtml(it.stock_area || "")}</div>
       </div>
       `;
     }),
@@ -3251,8 +3251,9 @@ app.get("/labels", requireAuth, async (req, res) => {
 
       return `
       <div class="label">
+        <div class="mono sku label-sku">${escapeHtml(it.sku || "")}</div>
         <img class="qr" src="${dataUrl}" alt="QR" />
-        <div class="mono sku">${escapeHtml(it.sku)}</div>
+        <div class="label-area">${escapeHtml(it.stock_area || "")}</div>
       </div>
       `;
     }),

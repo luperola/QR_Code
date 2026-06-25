@@ -383,9 +383,9 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .sku {
   width: 47mm;
-  min-height: 6mm;
-  max-height: 6mm;
-  overflow: visible;
+  min-height: 5.5mm;
+  max-height: 5.5mm;
+  overflow: hidden;
   text-align: center;
   font-size: 6.6pt;
   line-height: 1.05;
@@ -393,6 +393,20 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-weight: 700;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.label-area {
+  width: 47mm;
+  min-height: 3.5mm;
+  max-height: 3.5mm;
+  overflow: hidden;
+  text-align: center;
+  font-size: 6.4pt;
+  line-height: 1.1;
+  color: #000;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .lot {
