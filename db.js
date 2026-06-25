@@ -343,6 +343,34 @@ export async function seedItemTemplateOptions(optionsByCategory = {}) {
   }
 }
 
+export async function seedItemTemplateOptionCategory(category, values = []) {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS n
+     FROM item_template_options
+     WHERE category=$1`,
+    [category],
+  );
+  if (rows[0].n > 0) return false;
+
+  const cleanValues = Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!cleanValues.length) return false;
+
+  await db.query(
+    `INSERT INTO item_template_options (category, value)
+     SELECT $1, value
+     FROM UNNEST($2::text[]) AS option(value)
+     ON CONFLICT(category, value) DO NOTHING`,
+    [category, cleanValues],
+  );
+  return true;
+}
+
 export async function listItemTemplateOptions() {
   const { rows } = await db.query(
     `SELECT id, category, value

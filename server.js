@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import QRCode from "qrcode";
 import cookieSession from "cookie-session";
 import multer from "multer";
@@ -52,6 +52,7 @@ import {
   markLabelsPrinted,
   listPrintedLabels,
   seedItemTemplateOptions,
+  seedItemTemplateOptionCategory,
   listItemTemplateOptions,
   addItemTemplateOption,
   deleteItemTemplateOption,
@@ -362,6 +363,22 @@ function groupTemplateOptions(rows = []) {
   return grouped;
 }
 
+function bomTemplateLineOptionsFromFile() {
+  const templatePath = path.join(__dirname, "Template_BOQ.xlsx");
+  const workbook = XLSX.readFile(templatePath);
+  const sheet = workbook.Sheets.Liste;
+  if (!sheet) return [];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  return Array.from(
+    new Set(
+      rows
+        .slice(1)
+        .map((row) => String(row[0] || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 async function stockTemplateMenuOptions() {
   const rows = await listItemTemplateOptions();
   return rows.length ? groupTemplateOptions(rows) : stockTemplateMenuOptionsFromFile();
@@ -382,6 +399,10 @@ function syncBomTemplateWorkbook(optionsByCategory) {
       if (!listSheet || !inputSheet) {
         throw new Error("Template_BOQ.xlsx deve contenere i fogli Input e Liste.");
       }
+      const optionRows = await listItemTemplateOptions();
+      const lineValues = optionRows
+        .filter((row) => row.category === "lines")
+        .map((row) => row.value);
 
     const stockColumns = [
       { category: "descriptions", inputColumn: "B", listColumn: "B", header: "Descrizione" },
@@ -425,15 +446,19 @@ function syncBomTemplateWorkbook(optionsByCategory) {
       );
     }
 
+    inputSheet.autoFilter = null;
+    listSheet.autoFilter = null;
     inputSheet.getCell("A1").value = "Linea";
     inputSheet.getCell("D1").value = "u.m.";
     inputSheet.getCell("E1").value = "Q.tà";
     inputSheet.getCell("H1").value = "SKU";
-    const lineValues = [];
-    for (let row = 2; row <= listSheet.rowCount; row++) {
-      const value = String(listSheet.getCell(`A${row}`).value || "").trim();
-      if (value) lineValues.push(value);
+    const lastLineRowToClear = Math.max(listSheet.rowCount, lineValues.length + 1);
+    for (let row = 2; row <= lastLineRowToClear; row++) {
+      listSheet.getCell(`A${row}`).value = null;
     }
+    lineValues.forEach((value, index) => {
+      listSheet.getCell(`A${index + 2}`).value = value;
+    });
 
     for (const column of stockColumns) {
       inputSheet.getCell(`${column.inputColumn}1`).value = column.header;
@@ -483,7 +508,16 @@ function syncBomTemplateWorkbook(optionsByCategory) {
       };
     }
 
-      await workbook.xlsx.writeFile(templatePath);
+      const fileBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+      try {
+        await writeFile(templatePath, fileBuffer);
+      } catch (error) {
+        if (!["EBUSY", "EPERM"].includes(error?.code)) throw error;
+        console.warn(
+          "Template_BOQ.xlsx è aperto: download aggiornato generato senza sovrascrivere il file locale.",
+        );
+      }
+      return fileBuffer;
     });
   return bomTemplateSyncPromise;
 }
@@ -1751,7 +1785,14 @@ ${nav(req, "bom")}
   <div class="card pad">
     <div class="row" style="justify-content:space-between; margin-top:0">
       <h2>BOM attivi</h2>
-      <a class="btn secondary" href="/export/bom-template.xlsx">BOM template</a>
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <a class="btn secondary" href="/export/bom-template.xlsx">BOM template</a>
+        ${
+          req.user?.role === "admin"
+            ? `<a class="btn secondary" href="/bom/template-lines">Gestisci linee</a>`
+            : ""
+        }
+      </div>
     </div>
     <label>Seleziona BOM equipment
       <select id="activeBomSelect">
@@ -1808,6 +1849,118 @@ document.getElementById("activeBomSelect")?.addEventListener("change", function(
 </script>
 </body>
 </html>`);
+});
+
+app.get("/bom/template-lines", requireAdmin, async (req, res) => {
+  const optionRows = await listItemTemplateOptions();
+  const lines = optionRows.filter((row) => row.category === "lines");
+  const error = String(req.query.error || "");
+  const saved = String(req.query.saved || "") === "1";
+  const message = error
+    ? `<div class="flash err">${escapeHtml(error)}</div>`
+    : saved
+      ? `<div class="flash ok">Linee aggiornate nel Template BOQ.</div>`
+      : "";
+
+  res.send(`<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gestisci linee • QR Stock</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+${nav(req, "bom")}
+<main class="container">
+  <div class="row" style="justify-content:space-between">
+    <h1>Gestisci linee</h1>
+    <a class="btn secondary" href="/bom">Torna a BOM</a>
+  </div>
+  <p class="muted">Queste voci alimentano esclusivamente il menu Linea del Template BOQ.</p>
+  ${message}
+  <section class="card pad">
+    <form method="post" action="/bom/template-lines/add" class="row">
+      <input name="value" required placeholder="Nuova linea" style="min-width:280px" />
+      <button class="btn ok" type="submit">Aggiungi</button>
+    </form>
+    <div class="table-wrap" style="margin-top:12px; max-height:520px">
+      <table>
+        <thead><tr><th>Linea</th><th>Azione</th></tr></thead>
+        <tbody>
+          ${lines
+            .map(
+              (line) => `
+              <tr>
+                <td>${escapeHtml(line.value)}</td>
+                <td>
+                  <form method="post" action="/bom/template-lines/delete" onsubmit="return confirm('Eliminare questa linea dal Template BOQ?');">
+                    <input type="hidden" name="id" value="${Number(line.id)}" />
+                    <button class="btn danger" type="submit">Elimina</button>
+                  </form>
+                </td>
+              </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>`);
+});
+
+app.post("/bom/template-lines/add", requireAdmin, async (req, res) => {
+  const value = String(req.body?.value || "").trim();
+  if (!value) {
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent("Inserisci una linea valida.")}`,
+    );
+  }
+  const added = await addItemTemplateOption({ category: "lines", value });
+  if (!added) {
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent("Questa linea è già presente.")}`,
+    );
+  }
+  try {
+    await syncBomTemplateWorkbook(await stockTemplateMenuOptions());
+    return res.redirect("/bom/template-lines?saved=1");
+  } catch (error) {
+    console.error("Template BOQ sync failed after line add", error);
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent("Linea salvata, ma il file Excel non è stato aggiornato. Chiudi il file se è aperto e riprova.")}`,
+    );
+  }
+});
+
+app.post("/bom/template-lines/delete", requireAdmin, async (req, res) => {
+  const id = Number(req.body?.id);
+  if (!Number.isFinite(id)) {
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent("Linea non valida.")}`,
+    );
+  }
+  const result = await deleteItemTemplateOption({ id, category: "lines" });
+  if (!result.deleted) {
+    const error =
+      result.reason === "last_option"
+        ? "Non puoi eliminare l’ultima linea disponibile."
+        : "Linea non trovata.";
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent(error)}`,
+    );
+  }
+  try {
+    await syncBomTemplateWorkbook(await stockTemplateMenuOptions());
+    return res.redirect("/bom/template-lines?saved=1");
+  } catch (error) {
+    console.error("Template BOQ sync failed after line delete", error);
+    return res.redirect(
+      `/bom/template-lines?error=${encodeURIComponent("Linea eliminata, ma il file Excel non è stato aggiornato. Chiudi il file se è aperto e riprova.")}`,
+    );
+  }
 });
 
 const handleBomImport = async (req, res) => {
@@ -3795,10 +3948,8 @@ app.get("/export/items-template.xlsx", requireAuth, async (req, res) => {
 });
 
 app.get("/export/bom-template.xlsx", requireAuth, async (req, res) => {
-  const templatePath = path.join(__dirname, "Template_BOQ.xlsx");
   const options = await stockTemplateMenuOptions();
-  await syncBomTemplateWorkbook(options);
-  const fileBuffer = await readFile(templatePath);
+  const fileBuffer = await syncBomTemplateWorkbook(options);
 
   res.setHeader(
     "Content-Type",
@@ -3818,6 +3969,7 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   await initDb();
   await seedItemTemplateOptions(stockTemplateMenuOptionsFromFile());
+  await seedItemTemplateOptionCategory("lines", bomTemplateLineOptionsFromFile());
 
   app.listen(PORT, "0.0.0.0", async () => {
     const url = `http://localhost:${PORT}`;
