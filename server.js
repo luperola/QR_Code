@@ -768,6 +768,14 @@ function roundExcel(value, decimals = 2) {
   );
 }
 
+function formatQty(value, decimals = 2) {
+  const rounded = roundExcel(value, decimals);
+  return rounded.toLocaleString("it-IT", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
 function parseEuroNumber(value) {
   if (value === null || value === undefined || value === "") return 0;
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -1063,11 +1071,11 @@ function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
       uom: String(r.uom || "").trim() || "PC",
       equipmentRows: [],
     };
-    current.qtyRequiredTotal += Number(r.qty_required || 0);
-    current.qtyReservedTotal += Number(r.qty_reserved || 0);
+    current.qtyRequiredTotal += roundExcel(r.qty_required || 0, 2);
+    current.qtyReservedTotal += roundExcel(r.qty_reserved || 0, 2);
     current.equipmentRows.push({
       equipment: String(r.equipment || "").trim(),
-      qtyRequired: Number(r.qty_required || 0),
+      qtyRequired: roundExcel(r.qty_required || 0, 2),
       uom: String(r.uom || "").trim() || current.uom,
     });
     bySku.set(sku, current);
@@ -1075,7 +1083,9 @@ function buildReservationViewBySku({ reservations = [], stockRows = [] }) {
 
   for (const [sku, entry] of bySku.entries()) {
     const onhand = onhandBySku.get(sku) || 0;
-    entry.qtyToBuyTotal = Math.max(0, entry.qtyRequiredTotal - onhand);
+    entry.qtyRequiredTotal = roundExcel(entry.qtyRequiredTotal, 2);
+    entry.qtyReservedTotal = roundExcel(entry.qtyReservedTotal, 2);
+    entry.qtyToBuyTotal = roundExcel(Math.max(0, entry.qtyRequiredTotal - onhand), 2);
     entry.warning =
       entry.qtyToBuyTotal > 0
         ? `ATTENZIONE - DA ACQUISTARE ${entry.qtyToBuyTotal} mt`
@@ -1183,7 +1193,7 @@ app.get("/", requireAuth, async (req, res) => {
   const rows = stock
     .map(
       (r) => `
-    <tr data-search="${escapeHtml([r.sku, r.description, r.family, r.subfamily, r.dimension_1, r.dimension_2, r.ownership, r.stock_area, r.lot, r.uom, r.initial_qty, r.qty_onhand, (reservationBySku.get(r.sku)?.equipmentRows || []).map((e) => `${e.equipment} ${e.qtyRequired} ${e.uom}`).join(" ")].join(" "))}"
+    <tr data-search="${escapeHtml([r.sku, r.description, r.family, r.subfamily, r.dimension_1, r.dimension_2, r.ownership, r.stock_area, r.lot, r.uom, formatQty(r.initial_qty), formatQty(r.qty_onhand), (reservationBySku.get(r.sku)?.equipmentRows || []).map((e) => `${e.equipment} ${formatQty(e.qtyRequired)} ${e.uom}`).join(" ")].join(" "))}"
         data-description="${escapeHtml(r.description || "")}"
         data-type="${escapeHtml(r.family || "")}"
         data-measure="${escapeHtml(r.subfamily || r.dimension_1 || "")}"
@@ -1193,13 +1203,13 @@ app.get("/", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.subfamily || "")}</td>
       <td>${escapeHtml(r.uom || "")}</td>
-      <td style="text-align:right">${r.initial_qty ?? 0}</td>
-                 <td style="text-align:right">${r.qty_in}</td>
-      <td style="text-align:right">${r.qty_out}</td>
-      <td style="text-align:right"><b>${r.qty_onhand}</b></td>
+      <td style="text-align:right">${formatQty(r.initial_qty ?? 0)}</td>
+                 <td style="text-align:right">${formatQty(r.qty_in)}</td>
+      <td style="text-align:right">${formatQty(r.qty_out)}</td>
+      <td style="text-align:right"><b>${formatQty(r.qty_onhand)}</b></td>
            <td>${escapeHtml(
              (reservationBySku.get(r.sku)?.equipmentRows || [])
-               .map((e) => `${e.equipment}: ${e.qtyRequired} ${e.uom}`)
+               .map((e) => `${e.equipment}: ${formatQty(e.qtyRequired)} ${e.uom}`)
                .concat(
                  reservationBySku.get(r.sku)?.warning
                    ? [reservationBySku.get(r.sku).warning]
@@ -2590,7 +2600,7 @@ app.get("/bom/:equipment/match/:rowId", requireAuth, async (req, res) => {
       <td>${escapeHtml(c.lot || "")}</td>
       <td>${escapeHtml(c.uom || "")}</td>
       <td style="text-align:right"><b>${Number(c.qty_onhand || 0)}</b></td>
-      <td><input name="qty_${Number(c.item_id)}" type="number" step="0.01" min="0" value="${idx === 0 ? Number(row.qty_required || 0) : 0}" style="width:90px"></td>
+      <td><input name="qty_${Number(c.item_id)}" type="number" step="0.01" min="0" value="${idx === 0 ? roundExcel(row.qty_required || 0, 2) : 0}" style="width:90px"></td>
     </tr>`,
     )
     .join("");
@@ -2617,7 +2627,7 @@ ${nav(req, "bom")}
   <div class="card pad">
     <p><b>Family BOM:</b> <span class="mono">${escapeHtml(row.source_family || "")}</span></p>
     <p><b>Dimension:</b> <span class="mono">${escapeHtml(row.source_dimension || "")}</span></p>
-    <p><b>Qty Supplier:</b> ${Number(row.qty_required || 0)} ${escapeHtml(row.source_unit || "")}</p>
+    <p><b>Qty Supplier:</b> ${formatQty(row.qty_required || 0)} ${escapeHtml(row.source_unit || "")}</p>
     <p><b>Descrizione:</b> ${escapeHtml(row.description || "")}</p>
   </div>
 
@@ -2639,7 +2649,7 @@ ${nav(req, "bom")}
     <form method="post" action="/bom/${encodeURIComponent(equipment)}/match/${rowId}/to-buy" onsubmit="return confirm('Segnare questa riga BOM come TO BUY?');">
       <div class="row" style="margin-top:0; align-items:end">
         <label>Quantità TO BUY
-          <input name="qty_to_buy" type="number" step="0.01" min="0.01" value="${Number(row.qty_required || 0)}" style="width:140px" />
+          <input name="qty_to_buy" type="number" step="0.01" min="0.01" value="${roundExcel(row.qty_required || 0, 2)}" style="width:140px" />
         </label>
         <button class="btn danger" type="submit">TO BUY</button>
         <span class="muted">Usalo quando l’item non è disponibile a stock oppure devi acquistare solo una parte.</span>
@@ -2797,10 +2807,10 @@ app.get("/bom/:equipment", requireAuth, async (req, res) => {
       <td>${escapeHtml(r.source_family || "")}</td>
       <td>${escapeHtml(r.source_dimension || "")}</td>
       <td>${escapeHtml(r.description || "")}</td>
-      <td style="text-align:right">${Number(r.qty_required || 0)}</td>
+      <td style="text-align:right">${formatQty(r.qty_required || 0)}</td>
       <td>${escapeHtml(r.source_unit || "")}</td>
       <td class="mono">${escapeHtml(skuLabel)}</td>
-      <td style="text-align:right">${Number(r.qty_reserved || 0)}</td>
+      <td style="text-align:right">${formatQty(r.qty_reserved || 0)}</td>
       <td>${escapeHtml(r.availability || "")}</td>
       <td>${button}</td>
     </tr>`;
@@ -3019,7 +3029,7 @@ async function openMatchModal(rowId) {
   document.getElementById("matchMeta").innerHTML =
     '<span class="pill">Family: ' + htmlEscape(row.source_family) + '</span>' +
     '<span class="pill">Dimension: ' + htmlEscape(row.source_dimension || "-") + '</span>' +
-    '<span class="pill">Qty: ' + htmlEscape(row.qty_required) + ' ' + htmlEscape(row.source_unit || "") + '</span>';
+    '<span class="pill">Qty: ' + htmlEscape(formatQty(row.qty_required || 0)) + ' ' + htmlEscape(row.source_unit || "") + '</span>';
 
   if (data.mode === "SUBFAMILY_SELECT") {
     const options = (data.subfamilies || []).map((sf, idx) =>
@@ -4052,17 +4062,26 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
     bom.rows.map((r) => ({
       equipment: bom.equipment,
       ...r,
-      qty_required:
+      qty_required: roundExcel(
         Number(r.qty_required || 0) +
-        Number(totalPickedBySku.get(String(r.sku || "").trim()) || 0),
-      qty_to_buy: Math.max(
-        0,
-        Number(r.qty_required || 0) - Number(r.qty_reserved || 0),
+          Number(totalPickedBySku.get(String(r.sku || "").trim()) || 0),
+        2,
+      ),
+      qty_reserved: roundExcel(r.qty_reserved || 0, 2),
+      qty_to_buy: roundExcel(
+        Math.max(
+          0,
+          Number(r.qty_required || 0) - Number(r.qty_reserved || 0),
+        ),
+        2,
       ),
     })),
   );
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = "A1:I1";
+  for (const column of ["E", "F", "G"]) {
+    ws.getColumn(column).numFmt = "#,##0.##;-#,##0.##;0";
+  }
 
   res.setHeader(
     "Content-Type",

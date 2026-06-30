@@ -157,6 +157,23 @@ function normalizeEquipment(equipment) {
     .toUpperCase();
 }
 
+function roundExcel(value, decimals = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const factor = Math.pow(10, decimals);
+  return (
+    (Math.sign(n) * Math.round(Math.abs(n) * factor + Number.EPSILON)) / factor
+  );
+}
+
+function formatQty(value, decimals = 2) {
+  const rounded = roundExcel(value, decimals);
+  return rounded.toLocaleString("it-IT", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
 export function hashPin(pin) {
   const salt = randomBytes(16).toString("hex");
   const iterations = 150000;
@@ -1026,16 +1043,16 @@ export async function upsertBomFromRows(equipment, rows) {
         if (!description && stockInfo?.description) description = stockInfo.description;
         if (!stockInfo) {
           availability = "MISSING";
-          reservationNote = `Non presente a stock: comprare ${row.qty_required} ${row.source_unit || "pz"}`;
+          reservationNote = `Non presente a stock: comprare ${formatQty(row.qty_required)} ${row.source_unit || "pz"}`;
         } else if (qtyReserved >= row.qty_required) {
           availability = propertyMismatch ? `OK di ${stockPropertyStatusLabel}` : "OK";
-          reservationNote = `${propertyMismatchNote}Presente a stock: riservati ${qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Presente a stock: riservati ${formatQty(qtyReserved)} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else if (qtyReserved > 0) {
           availability = propertyMismatch ? `PARTIAL di ${stockPropertyStatusLabel}` : "PARTIAL";
-          reservationNote = `${propertyMismatchNote}Parziale: riservati ${qtyReserved}, da comprare ${row.qty_required - qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Parziale: riservati ${formatQty(qtyReserved)}, da comprare ${formatQty(row.qty_required - qtyReserved)} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else {
           availability = "MISSING";
-          reservationNote = `${propertyMismatchNote}Stock insufficiente: comprare ${row.qty_required} ${stockInfo?.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Stock insufficiente: comprare ${formatQty(row.qty_required)} ${stockInfo?.uom || row.source_unit || ""}`.trim();
         }
       }
 
