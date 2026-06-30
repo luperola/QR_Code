@@ -884,6 +884,12 @@ export async function upsertBomFromRows(equipment, rows) {
       if (normalized === "GTS") return "GTS";
       return token || "";
     };
+    const propertyStatusLabel = (token) => {
+      const normalized = String(token || "").toUpperCase();
+      if (normalized === "LN" || normalized === "LINDE") return "LN";
+      if (normalized === "GTS") return "GTS";
+      return token || "";
+    };
     const resolveStockSkuForBomSku = async (requestedSku) => {
       const normalizedSku = String(requestedSku || "").trim();
       const exact = await client.query(
@@ -1007,8 +1013,10 @@ export async function upsertBomFromRows(equipment, rows) {
         const match = await resolveStockSkuForBomSku(row.sku);
         stockSku = match.stockSku;
         propertyMismatch = Boolean(match.propertyMismatch);
+        const stockPropertyLabel = propertyLabel(match.stockProperty);
+        const stockPropertyStatusLabel = propertyStatusLabel(match.stockProperty);
         propertyMismatchNote = propertyMismatch
-          ? `BOQ richiede ${propertyLabel(match.requestedProperty)}, disponibile a stock ${propertyLabel(match.stockProperty)} (${stockSku}). `
+          ? `BOQ richiede ${propertyLabel(match.requestedProperty)}, disponibile a stock ${stockPropertyLabel} (${stockSku}). `
           : "";
         const freeQty = await getFreeQtyForSku(stockSku);
         const stockInfo = stockInfoBySku.get(stockSku);
@@ -1020,10 +1028,10 @@ export async function upsertBomFromRows(equipment, rows) {
           availability = "MISSING";
           reservationNote = `Non presente a stock: comprare ${row.qty_required} ${row.source_unit || "pz"}`;
         } else if (qtyReserved >= row.qty_required) {
-          availability = "OK";
+          availability = propertyMismatch ? `OK di ${stockPropertyStatusLabel}` : "OK";
           reservationNote = `${propertyMismatchNote}Presente a stock: riservati ${qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else if (qtyReserved > 0) {
-          availability = "PARTIAL";
+          availability = propertyMismatch ? `PARTIAL di ${stockPropertyStatusLabel}` : "PARTIAL";
           reservationNote = `${propertyMismatchNote}Parziale: riservati ${qtyReserved}, da comprare ${row.qty_required - qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else {
           availability = "MISSING";
