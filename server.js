@@ -421,17 +421,26 @@ function syncBomTemplateWorkbook(optionsByCategory) {
       },
     ];
 
-    inputSheet.getColumn("D").width = 10;
-    inputSheet.getColumn("E").width = 12;
-    inputSheet.getColumn("F").width = 33;
-    inputSheet.getColumn("G").width = 20;
-    inputSheet.getColumn("H").width = 42;
+    const boqColumnWidths = {
+      A: 20.99,
+      B: 44.63,
+      C: 16.9,
+      D: 9.99,
+      E: 11.99,
+      F: 18.27,
+      G: 17.08,
+      H: 24.54,
+      I: 35.99,
+    };
+    for (const [column, width] of Object.entries(boqColumnWidths)) {
+      inputSheet.getColumn(column).width = width;
+    }
     listSheet.getColumn("E").width = listSheet.getColumn("D").width;
     for (let row = 1; row <= 501; row++) {
       const baseStyle = JSON.parse(
         JSON.stringify(inputSheet.getCell(`C${row}`).style || {}),
       );
-      for (const column of ["D", "E", "F", "G", "H"]) {
+      for (const column of ["D", "E", "F", "G", "H", "I"]) {
         const cell = inputSheet.getCell(`${column}${row}`);
         cell.value = null;
         cell.dataValidation = {};
@@ -451,7 +460,8 @@ function syncBomTemplateWorkbook(optionsByCategory) {
     inputSheet.getCell("A1").value = "Linea";
     inputSheet.getCell("D1").value = "u.m.";
     inputSheet.getCell("E1").value = "Q.tà";
-    inputSheet.getCell("H1").value = "SKU";
+    inputSheet.getCell("H1").value = "Note";
+    inputSheet.getCell("I1").value = "SKU";
     const lastLineRowToClear = Math.max(listSheet.rowCount, lineValues.length + 1);
     for (let row = 2; row <= lastLineRowToClear; row++) {
       listSheet.getCell(`A${row}`).value = null;
@@ -501,7 +511,9 @@ function syncBomTemplateWorkbook(optionsByCategory) {
         allowBlank: true,
         formulae: [0],
       };
-      inputSheet.getCell(`H${row}`).value = {
+      inputSheet.getCell(`H${row}`).value = null;
+      inputSheet.getCell(`H${row}`).dataValidation = {};
+      inputSheet.getCell(`I${row}`).value = {
         formula:
           `IF(OR(B${row}="",C${row}="",F${row}="",G${row}=""),"",` +
           `B${row}&"-"&C${row}&"-"&F${row}&"-"&IF(G${row}="Linde","LN",IF(G${row}="GTS","GTS",G${row})))`,
