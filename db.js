@@ -655,17 +655,17 @@ export async function getStockRows({ warehouse = null } = {}) {
     WITH agg AS (
       SELECT
        i.id AS item_id,
-     i.sku, i.description, i.family, i.subfamily, i.dimension_1, i.dimension_2, i.lot, i.entry_date, i.uom, i.initial_qty,
+     i.sku, i.description, i.family, i.subfamily, i.dimension_1, i.dimension_2, i.lot, i.entry_date, i.uom, i.initial_qty, i.ownership, i.stock_area,
         m.warehouse, m.location, m.bin,
         COALESCE(SUM(CASE WHEN m.type='IN' THEN m.qty END),0) AS qty_in,
         COALESCE(SUM(CASE WHEN m.type='OUT' THEN m.qty END),0) AS qty_out
       FROM items i
       LEFT JOIN movements m ON m.item_id = i.id
       ${where}
-       GROUP BY i.id, i.sku, i.description, i.family, i.subfamily, i.dimension_1, i.dimension_2, i.lot, i.entry_date, i.uom, i.initial_qty, m.warehouse, m.location, m.bin
+       GROUP BY i.id, i.sku, i.description, i.family, i.subfamily, i.dimension_1, i.dimension_2, i.lot, i.entry_date, i.uom, i.initial_qty, i.ownership, i.stock_area, m.warehouse, m.location, m.bin
     )
     SELECT
-         item_id, sku, description, family, subfamily, dimension_1, dimension_2, lot, entry_date, uom, initial_qty,
+         item_id, sku, description, family, subfamily, dimension_1, dimension_2, lot, entry_date, uom, initial_qty, ownership, stock_area,
       COALESCE(warehouse,'MAIN') AS warehouse,
       COALESCE(location,'DEFAULT') AS location,
       COALESCE(bin,'DEFAULT') AS bin,

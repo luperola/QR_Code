@@ -1182,7 +1182,12 @@ app.get("/", requireAuth, async (req, res) => {
   const rows = stock
     .map(
       (r) => `
-    <tr data-search="${escapeHtml([r.sku, r.description, r.family, r.subfamily, r.dimension_1, r.dimension_2, r.lot, r.uom, r.initial_qty, r.qty_onhand, (reservationBySku.get(r.sku)?.equipmentRows || []).map((e) => `${e.equipment} ${e.qtyRequired} ${e.uom}`).join(" ")].join(" "))}">
+    <tr data-search="${escapeHtml([r.sku, r.description, r.family, r.subfamily, r.dimension_1, r.dimension_2, r.ownership, r.stock_area, r.lot, r.uom, r.initial_qty, r.qty_onhand, (reservationBySku.get(r.sku)?.equipmentRows || []).map((e) => `${e.equipment} ${e.qtyRequired} ${e.uom}`).join(" ")].join(" "))}"
+        data-description="${escapeHtml(r.description || "")}"
+        data-type="${escapeHtml(r.family || "")}"
+        data-measure="${escapeHtml(r.subfamily || r.dimension_1 || "")}"
+        data-ownership="${escapeHtml(r.ownership || "")}"
+        data-area="${escapeHtml(r.stock_area || "")}">
       <td>${escapeHtml(r.sku)}</td>
       <td>${escapeHtml(r.description)}</td>
       <td>${escapeHtml(r.subfamily || "")}</td>
@@ -1227,8 +1232,23 @@ ${nav(req, "stock")}
   <div class="card pad">
     <h2>Cerca nello stock</h2>
     <div class="row" style="margin-top:0; align-items:end">
-      <label style="min-width:320px">Cerca item
-        <input id="stockSearchInput" placeholder="SKU, descrizione, famiglia, dimensione, lotto..." />
+      <label style="min-width:220px">Descrizione
+        <input class="stock-filter" id="stockSearchDescription" data-field="description" placeholder="es. TUBO" />
+      </label>
+      <label style="min-width:180px">Tipo
+        <input class="stock-filter" id="stockSearchType" data-field="type" placeholder="es. EP" />
+      </label>
+      <label style="min-width:180px">Misura
+        <input class="stock-filter" id="stockSearchMeasure" data-field="measure" placeholder="es. 1/2" />
+      </label>
+      <label style="min-width:180px">Proprietà
+        <input class="stock-filter" id="stockSearchOwnership" data-field="ownership" placeholder="es. Linde" />
+      </label>
+      <label style="min-width:160px">Area
+        <input class="stock-filter" id="stockSearchArea" data-field="area" placeholder="es. Area 1" />
+      </label>
+      <label style="min-width:220px">Cerca libera
+        <input class="stock-filter" id="stockSearchInput" data-field="search" placeholder="SKU o testo libero..." />
       </label>
       <button class="btn" type="button" id="stockSearchBtn">Cerca</button>
       <button class="btn secondary" type="button" id="stockShowAllBtn">Mostra tutto</button>
@@ -1261,24 +1281,43 @@ ${nav(req, "stock")}
 </main>
 <script>
 const stockSearchInput = document.getElementById("stockSearchInput");
+const stockFilterInputs = Array.from(document.querySelectorAll(".stock-filter"));
 const stockSearchBtn = document.getElementById("stockSearchBtn");
 const stockShowAllBtn = document.getElementById("stockShowAllBtn");
 const stockSearchCount = document.getElementById("stockSearchCount");
 function applyStockSearch() {
-  const q = String(stockSearchInput?.value || "").toLowerCase().trim();
+  const filters = Object.fromEntries(
+    stockFilterInputs.map((input) => [
+      input.getAttribute("data-field"),
+      String(input.value || "").toLowerCase().trim(),
+    ]),
+  );
   const stockRows = Array.from(document.querySelectorAll("tbody tr[data-search]"));
   let visible = 0;
   for (const row of stockRows) {
     const haystack = String(row.getAttribute("data-search") || "").toLowerCase();
-    const ok = !q || haystack.includes(q);
+    const ok =
+      (!filters.search || haystack.includes(filters.search)) &&
+      (!filters.description || String(row.dataset.description || "").toLowerCase().includes(filters.description)) &&
+      (!filters.type || String(row.dataset.type || "").toLowerCase().includes(filters.type)) &&
+      (!filters.measure || String(row.dataset.measure || "").toLowerCase().includes(filters.measure)) &&
+      (!filters.ownership || String(row.dataset.ownership || "").toLowerCase().includes(filters.ownership)) &&
+      (!filters.area || String(row.dataset.area || "").toLowerCase().includes(filters.area));
     row.style.display = ok ? "" : "none";
     if (ok) visible++;
   }
-  if (stockSearchCount) stockSearchCount.textContent = q ? (visible + " risultati") : (stockRows.length + " righe totali");
+  const hasFilters = Object.values(filters).some(Boolean);
+  if (stockSearchCount) stockSearchCount.textContent = hasFilters ? (visible + " risultati") : (stockRows.length + " righe totali");
 }
 stockSearchBtn?.addEventListener("click", applyStockSearch);
-stockSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyStockSearch(); } });
-stockShowAllBtn?.addEventListener("click", () => { if (stockSearchInput) stockSearchInput.value = ""; applyStockSearch(); });
+stockFilterInputs.forEach((input) => {
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyStockSearch(); } });
+  input.addEventListener("input", applyStockSearch);
+});
+stockShowAllBtn?.addEventListener("click", () => {
+  stockFilterInputs.forEach((input) => { input.value = ""; });
+  applyStockSearch();
+});
 applyStockSearch();
 </script>
 </body>
