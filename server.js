@@ -1258,6 +1258,7 @@ ${nav(req, "stock")}
       <datalist id="stockAreaOptions">${dataListOptions(menus.areas)}</datalist>
       <button class="btn" type="button" id="stockSearchBtn">Cerca</button>
       <button class="btn secondary" type="button" id="stockShowAllBtn">Mostra tutto</button>
+      <button class="btn secondary" type="button" id="stockResetBtn">Reset</button>
       <span id="stockSearchCount" class="muted"></span>
     </div>
   </div>
@@ -1290,6 +1291,7 @@ const stockSearchInput = document.getElementById("stockSearchInput");
 const stockFilterInputs = Array.from(document.querySelectorAll(".stock-filter"));
 const stockSearchBtn = document.getElementById("stockSearchBtn");
 const stockShowAllBtn = document.getElementById("stockShowAllBtn");
+const stockResetBtn = document.getElementById("stockResetBtn");
 const stockSearchCount = document.getElementById("stockSearchCount");
 function applyStockSearch() {
   const filters = Object.fromEntries(
@@ -1321,6 +1323,10 @@ stockFilterInputs.forEach((input) => {
   input.addEventListener("input", applyStockSearch);
 });
 stockShowAllBtn?.addEventListener("click", () => {
+  stockFilterInputs.forEach((input) => { input.value = ""; });
+  applyStockSearch();
+});
+stockResetBtn?.addEventListener("click", () => {
   stockFilterInputs.forEach((input) => { input.value = ""; });
   applyStockSearch();
 });
