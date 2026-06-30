@@ -572,6 +572,9 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
         targetCell.value = null;
         targetCell.dataValidation = {};
       }
+      inputSheet.getCell(`G${row}`).value = {
+        formula: `IF(A${row}="","",IF(ISNUMBER(SEARCH("Tubo",A${row})),"mt","pz"))`,
+      };
       inputSheet.getCell(`I${row}`).value = {
         formula: `IF(OR(F${row}="",H${row}=""),"",F${row}*H${row})`,
       };
@@ -582,6 +585,14 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
       };
     }
 
+    inputSheet.getCell("G1").value = "u.m.";
+    for (let row = 2; row <= 800; row++) {
+      inputSheet.getCell(`G${row}`).value = {
+        formula: `IF(A${row}="","",IF(ISNUMBER(SEARCH("Tubo",A${row})),"mt","pz"))`,
+      };
+      inputSheet.getCell(`G${row}`).dataValidation = {};
+    }
+
     const validationFormulaByInputColumn = {};
     const inputColumnByCategory = {
       descriptions: "A",
@@ -589,7 +600,6 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
       measures: "C",
       ownerships: "D",
       areas: "E",
-      uoms: "G",
     };
 
     for (const [category, config] of Object.entries(STOCK_TEMPLATE_CATEGORIES)) {
@@ -602,8 +612,11 @@ function syncStockTemplateWorkbook(optionsByCategory, outputPath = null) {
         listSheet.getCell(`${config.column}${index + 2}`).value = value;
       });
       const lastValueRow = Math.max(2, values.length + 1);
-      validationFormulaByInputColumn[inputColumnByCategory[category]] =
-        `Liste!$${config.column}$2:$${config.column}$${lastValueRow}`;
+      const inputColumn = inputColumnByCategory[category];
+      if (inputColumn) {
+        validationFormulaByInputColumn[inputColumn] =
+          `Liste!$${config.column}$2:$${config.column}$${lastValueRow}`;
+      }
     }
 
     for (const [column, formula] of Object.entries(validationFormulaByInputColumn)) {
