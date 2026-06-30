@@ -858,27 +858,117 @@ export async function upsertBomFromRows(equipment, rows) {
     await client.query(`DELETE FROM stock_reservations WHERE equipment=$1`, [eq]);
     await client.query(`DELETE FROM bom_rows WHERE bom_id=$1`, [bomId]);
 
+    const freeQtyBySku = new Map();
+    const stockInfoBySku = new Map();
+    const getFreeQtyForSku = async (sku) => {
+      const normalizedSku = String(sku || "").trim();
+      if (!normalizedSku || normalizedSku.startsWith("__PENDING__")) return null;
+      if (freeQtyBySku.has(normalizedSku)) {
+        return freeQtyBySku.get(normalizedSku);
+      }
+
+      const stockRes = await client.query(
+        `
+        SELECT
+          MIN(i.id) AS item_id,
+          MAX(NULLIF(i.description, '')) AS description,
+          MAX(NULLIF(i.uom, '')) AS uom,
+          COALESCE(SUM(i.initial_qty), 0)
+            + COALESCE(SUM(CASE WHEN m.type='IN' THEN m.qty END), 0)
+            - COALESCE(SUM(CASE WHEN m.type='OUT' THEN m.qty END), 0) AS qty_onhand
+        FROM items i
+        LEFT JOIN movements m ON m.item_id = i.id
+        WHERE i.sku = $1
+        GROUP BY i.sku
+        `,
+        [normalizedSku],
+      );
+      const stock = stockRes.rows[0];
+      if (!stock) {
+        stockInfoBySku.set(normalizedSku, null);
+        freeQtyBySku.set(normalizedSku, 0);
+        return 0;
+      }
+
+      const reservedRes = await client.query(
+        `SELECT COALESCE(SUM(qty_reserved),0) AS qty_reserved FROM stock_reservations WHERE sku=$1`,
+        [normalizedSku],
+      );
+      const onhand = Number(stock.qty_onhand || 0);
+      const alreadyReserved = Number(reservedRes.rows[0]?.qty_reserved || 0);
+      const freeQty = Math.max(0, onhand - alreadyReserved);
+      stockInfoBySku.set(normalizedSku, stock);
+      freeQtyBySku.set(normalizedSku, freeQty);
+      return freeQty;
+    };
+
     for (const row of bomRows) {
+      const isPending = row.sku.startsWith("__PENDING__");
+      let qtyReserved = 0;
+      let availability = "TO_MATCH";
+      let reservationNote =
+        `Scegli item da famiglia ${row.source_family}${row.source_dimension ? ` / dimensione ${row.source_dimension}` : ""}`;
+      let matchedItemId = null;
+      let description = row.description || "";
+
+      if (!isPending) {
+        const freeQty = await getFreeQtyForSku(row.sku);
+        const stockInfo = stockInfoBySku.get(row.sku);
+        qtyReserved = Math.max(0, Math.min(row.qty_required, Number(freeQty || 0)));
+        freeQtyBySku.set(row.sku, Math.max(0, Number(freeQty || 0) - qtyReserved));
+        matchedItemId = stockInfo?.item_id || null;
+        if (!description && stockInfo?.description) description = stockInfo.description;
+        if (!stockInfo) {
+          availability = "MISSING";
+          reservationNote = `Non presente a stock: comprare ${row.qty_required} ${row.source_unit || "pz"}`;
+        } else if (qtyReserved >= row.qty_required) {
+          availability = "OK";
+          reservationNote = `Presente a stock: riservati ${qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+        } else if (qtyReserved > 0) {
+          availability = "PARTIAL";
+          reservationNote = `Parziale: riservati ${qtyReserved}, da comprare ${row.qty_required - qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+        } else {
+          availability = "MISSING";
+          reservationNote = `Stock insufficiente: comprare ${row.qty_required} ${stockInfo?.uom || row.source_unit || ""}`.trim();
+        }
+      }
+
       await client.query(
         `
         INSERT INTO bom_rows (
           bom_id, sku, description, qty_required, qty_reserved, availability, reservation_note,
-          source_line_no, source_family, source_dimension, source_unit, updated_at
+          source_line_no, source_family, source_dimension, source_unit, matched_item_id, updated_at
         )
-        VALUES ($1,$2,$3,$4,0,'TO_MATCH',$5,$6,$7,$8,$9,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
         `,
         [
           bomId,
           row.sku,
-          row.description || "",
+          description,
           row.qty_required,
-          `Scegli item da famiglia ${row.source_family}${row.source_dimension ? ` / dimensione ${row.source_dimension}` : ""}`,
+          qtyReserved,
+          availability,
+          reservationNote,
           row.source_line_no,
           row.source_family,
           row.source_dimension,
           row.source_unit,
+          matchedItemId,
         ],
       );
+
+      if (qtyReserved > 0 && !isPending) {
+        await client.query(
+          `
+          INSERT INTO stock_reservations (equipment, sku, qty_reserved, updated_at)
+          VALUES ($1,$2,$3,NOW())
+          ON CONFLICT (equipment, sku) DO UPDATE SET
+            qty_reserved = stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
+            updated_at = NOW()
+          `,
+          [eq, row.sku, qtyReserved],
+        );
+      }
     }
 
     await client.query(`UPDATE bom_headers SET updated_at=NOW() WHERE id=$1`, [bomId]);

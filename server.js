@@ -2116,10 +2116,14 @@ const handleBomImport = async (req, res) => {
       normalized.some((h) => h === "quantity dima") ||
       normalized.some((h) => h === "quantity supplier") ||
       normalized.some((h) => h === "quantity") ||
-      normalized.some((h) => h === "qty" || h === "q ty" || h === "qta") ||
+      normalized.some((h) => h === "qty" || h === "q ty" || h === "q ta" || h === "qta") ||
       joined.includes("quantity dima") ||
       joined.includes("quantity supplier");
-    return hasDiameter && (hasFamily || hasStColumns) && hasQuantity;
+    const hasTemplateBoqColumns =
+      normalized.some((h) => h === "sku") &&
+      normalized.some((h) => h === "descrizione") &&
+      hasQuantity;
+    return hasTemplateBoqColumns || (hasDiameter && (hasFamily || hasStColumns) && hasQuantity);
   });
 
   if (headerRowIndex < 0) {
@@ -2154,12 +2158,18 @@ const handleBomImport = async (req, res) => {
     brand: col("BRAND"),
     characteristics: col("CHARACTERISTICS"),
     diameter: col("DIAMETER"),
+    description: col("Descrizione", "Description"),
+    type: col("Tipo", "Type"),
+    measure: col("Misura / Diametro", "Misura", "Measure", "Diameter", "DIAMETER"),
+    ownership: col("ProprietÃ ", "Proprieta", "Ownership", "Property"),
+    sku: col("SKU"),
     qtySupplier: col(
       "Quantity DIMA",
       "Quantity Supplier",
       "Quantity",
       "Qty",
       "Q.ty",
+      "Q.tÃ ",
       "Qta",
     ),
     unit: col("unit", "uom", "um", "u.m."),
@@ -2174,13 +2184,10 @@ const handleBomImport = async (req, res) => {
     idx.diameter >= 0 &&
     idx.qtySupplier >= 0;
 
-  if (idx.qtySupplier < 0 || (!isStBom && idx.family < 0) || idx.diameter < 0) {
-    return res
-      .status(400)
-      .send(
-        "Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier. Per file ST servono CODE, FACILITIES, MATERIALS, DIAMETER e Quantity DIMA.",
-      );
-  }
+  const isTemplateBoq =
+    idx.sku >= 0 &&
+    idx.description >= 0 &&
+    idx.qtySupplier >= 0;
 
   const numberValue = (value) => {
     if (typeof value === "number") return value;
@@ -2195,6 +2202,54 @@ const handleBomImport = async (req, res) => {
   };
 
   const cell = (row, index) => (index >= 0 ? row[index] : "");
+
+  if (isTemplateBoq) {
+    const bySku = new Map();
+    let skipped = 0;
+    for (let r = headerRowIndex + 1; r < matrix.length; r++) {
+      const row = matrix[r];
+      const sku = String(cell(row, idx.sku) || "").trim();
+      const qtyRequired = numberValue(cell(row, idx.qtySupplier));
+      if (!sku || !Number.isFinite(qtyRequired) || qtyRequired <= 0) {
+        skipped++;
+        continue;
+      }
+      const description = String(cell(row, idx.description) || "").trim();
+      const type = String(cell(row, idx.type) || "").trim();
+      const measure = String(cell(row, idx.measure) || "").trim();
+      const ownership = String(cell(row, idx.ownership) || "").trim();
+      const sourceUnit = String(cell(row, idx.unit) || "").trim();
+      const existing = bySku.get(sku);
+      if (existing) {
+        existing.qty_required += qtyRequired;
+        if (!existing.description && description) existing.description = description;
+      } else {
+        bySku.set(sku, {
+          sku,
+          description: [description, type, measure, ownership].filter(Boolean).join(" - "),
+          qty_required: qtyRequired,
+          source_line_no: r + 1,
+          source_family: description || "BOQ",
+          source_dimension: measure,
+          source_unit: sourceUnit,
+        });
+      }
+    }
+    const parsedRows = Array.from(bySku.values());
+    const result = await upsertBomFromRows(equipment, parsedRows);
+    return res.redirect(
+      `/bom/${encodeURIComponent(result.equipment)}?imported=${result.rows_count}&skipped=${skipped}`,
+    );
+  }
+
+  if (idx.qtySupplier < 0 || (!isStBom && idx.family < 0) || idx.diameter < 0) {
+    return res
+      .status(400)
+      .send(
+        "Colonne obbligatorie mancanti: DIAMETER, Family e Quantity DIMA / Quantity / Quantity Supplier. Per file ST servono CODE, FACILITIES, MATERIALS, DIAMETER e Quantity DIMA.",
+      );
+  }
+
   const stGasSeries = (codeValue) => {
     const code = norm(codeValue).toUpperCase();
     if (code.includes("BULK GASES")) return "UL";
@@ -3986,7 +4041,10 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
     { header: "Equipment", key: "equipment", width: 20 },
     { header: "SKU", key: "sku", width: 18 },
     { header: "Description", key: "description", width: 40 },
+    { header: "U.M.", key: "source_unit", width: 10 },
     { header: "QtyRequired", key: "qty_required", width: 14 },
+    { header: "QtyReserved", key: "qty_reserved", width: 14 },
+    { header: "QtyToBuy", key: "qty_to_buy", width: 14 },
     { header: "StockStatus", key: "availability", width: 14 },
     { header: "ReservationNote", key: "reservation_note", width: 42 },
   ];
@@ -3997,10 +4055,14 @@ app.get("/export/bom/:equipment.xlsx", requireAuth, async (req, res) => {
       qty_required:
         Number(r.qty_required || 0) +
         Number(totalPickedBySku.get(String(r.sku || "").trim()) || 0),
+      qty_to_buy: Math.max(
+        0,
+        Number(r.qty_required || 0) - Number(r.qty_reserved || 0),
+      ),
     })),
   );
   ws.getRow(1).font = { bold: true };
-  ws.autoFilter = "A1:F1";
+  ws.autoFilter = "A1:I1";
 
   res.setHeader(
     "Content-Type",
