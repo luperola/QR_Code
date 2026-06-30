@@ -1173,6 +1173,7 @@ app.get("/logout", (req, res) => {
 // ---- Pages ----
 app.get("/", requireAuth, async (req, res) => {
   const stock = await getStockRows({ warehouse: null });
+  const menus = await stockTemplateMenuOptions();
   const reservations = await listStockReservations();
   const reservationBySku = buildReservationViewBySku({
     reservations,
@@ -1233,23 +1234,28 @@ ${nav(req, "stock")}
     <h2>Cerca nello stock</h2>
     <div class="row" style="margin-top:0; align-items:end">
       <label style="min-width:220px">Descrizione
-        <input class="stock-filter" id="stockSearchDescription" data-field="description" placeholder="es. TUBO" />
+        <input class="stock-filter" id="stockSearchDescription" data-field="description" list="stockDescriptionOptions" autocomplete="off" placeholder="Digita per cercare..." />
       </label>
       <label style="min-width:180px">Tipo
-        <input class="stock-filter" id="stockSearchType" data-field="type" placeholder="es. EP" />
+        <input class="stock-filter" id="stockSearchType" data-field="type" list="stockTypeOptions" autocomplete="off" placeholder="Digita per cercare..." />
       </label>
       <label style="min-width:180px">Misura
-        <input class="stock-filter" id="stockSearchMeasure" data-field="measure" placeholder="es. 1/2" />
+        <input class="stock-filter" id="stockSearchMeasure" data-field="measure" list="stockMeasureOptions" autocomplete="off" placeholder="Digita per cercare..." />
       </label>
       <label style="min-width:180px">Proprietà
-        <input class="stock-filter" id="stockSearchOwnership" data-field="ownership" placeholder="es. Linde" />
+        <input class="stock-filter" id="stockSearchOwnership" data-field="ownership" list="stockOwnershipOptions" autocomplete="off" placeholder="Digita per cercare..." />
       </label>
       <label style="min-width:160px">Area
-        <input class="stock-filter" id="stockSearchArea" data-field="area" placeholder="es. Area 1" />
+        <input class="stock-filter" id="stockSearchArea" data-field="area" list="stockAreaOptions" autocomplete="off" placeholder="Digita per cercare..." />
       </label>
       <label style="min-width:220px">Cerca libera
         <input class="stock-filter" id="stockSearchInput" data-field="search" placeholder="SKU o testo libero..." />
       </label>
+      <datalist id="stockDescriptionOptions">${dataListOptions(menus.descriptions)}</datalist>
+      <datalist id="stockTypeOptions">${dataListOptions(menus.types)}</datalist>
+      <datalist id="stockMeasureOptions">${dataListOptions(menus.measures)}</datalist>
+      <datalist id="stockOwnershipOptions">${dataListOptions(menus.ownerships)}</datalist>
+      <datalist id="stockAreaOptions">${dataListOptions(menus.areas)}</datalist>
       <button class="btn" type="button" id="stockSearchBtn">Cerca</button>
       <button class="btn secondary" type="button" id="stockShowAllBtn">Mostra tutto</button>
       <span id="stockSearchCount" class="muted"></span>
