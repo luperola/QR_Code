@@ -860,6 +860,95 @@ export async function upsertBomFromRows(equipment, rows) {
 
     const freeQtyBySku = new Map();
     const stockInfoBySku = new Map();
+    const propertyTokens = new Set(["GTS", "LN", "LINDE"]);
+    const skuParts = (sku) =>
+      String(sku || "")
+        .trim()
+        .split("-")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    const skuProperty = (sku) => {
+      const parts = skuParts(sku);
+      const last = String(parts[parts.length - 1] || "").toUpperCase();
+      return propertyTokens.has(last) ? last : "";
+    };
+    const skuWithoutProperty = (sku) => {
+      const parts = skuParts(sku);
+      const last = String(parts[parts.length - 1] || "").toUpperCase();
+      if (propertyTokens.has(last)) parts.pop();
+      return parts.join("-").toUpperCase();
+    };
+    const propertyLabel = (token) => {
+      const normalized = String(token || "").toUpperCase();
+      if (normalized === "LN" || normalized === "LINDE") return "Linde";
+      if (normalized === "GTS") return "GTS";
+      return token || "";
+    };
+    const resolveStockSkuForBomSku = async (requestedSku) => {
+      const normalizedSku = String(requestedSku || "").trim();
+      const exact = await client.query(
+        `SELECT sku FROM items WHERE sku=$1 LIMIT 1`,
+        [normalizedSku],
+      );
+      if (exact.rows[0]?.sku) {
+        return {
+          requestedSku: normalizedSku,
+          stockSku: exact.rows[0].sku,
+          propertyMismatch: false,
+          requestedProperty: skuProperty(normalizedSku),
+          stockProperty: skuProperty(exact.rows[0].sku),
+        };
+      }
+
+      const requestedBase = skuWithoutProperty(normalizedSku);
+      const requestedProperty = skuProperty(normalizedSku);
+      if (!requestedBase || !requestedProperty) {
+        return {
+          requestedSku: normalizedSku,
+          stockSku: normalizedSku,
+          propertyMismatch: false,
+          requestedProperty,
+          stockProperty: "",
+        };
+      }
+
+      const candidates = await client.query(
+        `
+        SELECT sku
+        FROM items
+        WHERE UPPER(sku) LIKE $1
+        ORDER BY sku
+        `,
+        [`${requestedBase}-%`],
+      );
+      const candidate = candidates.rows.find((row) => {
+        const candidateSku = String(row.sku || "").trim();
+        const candidateProperty = skuProperty(candidateSku);
+        return (
+          skuWithoutProperty(candidateSku) === requestedBase &&
+          candidateProperty &&
+          candidateProperty !== requestedProperty
+        );
+      });
+
+      if (!candidate) {
+        return {
+          requestedSku: normalizedSku,
+          stockSku: normalizedSku,
+          propertyMismatch: false,
+          requestedProperty,
+          stockProperty: "",
+        };
+      }
+
+      return {
+        requestedSku: normalizedSku,
+        stockSku: String(candidate.sku || "").trim(),
+        propertyMismatch: true,
+        requestedProperty,
+        stockProperty: skuProperty(candidate.sku),
+      };
+    };
     const getFreeQtyForSku = async (sku) => {
       const normalizedSku = String(sku || "").trim();
       if (!normalizedSku || normalizedSku.startsWith("__PENDING__")) return null;
@@ -910,12 +999,21 @@ export async function upsertBomFromRows(equipment, rows) {
         `Scegli item da famiglia ${row.source_family}${row.source_dimension ? ` / dimensione ${row.source_dimension}` : ""}`;
       let matchedItemId = null;
       let description = row.description || "";
+      let stockSku = row.sku;
+      let propertyMismatch = false;
+      let propertyMismatchNote = "";
 
       if (!isPending) {
-        const freeQty = await getFreeQtyForSku(row.sku);
-        const stockInfo = stockInfoBySku.get(row.sku);
+        const match = await resolveStockSkuForBomSku(row.sku);
+        stockSku = match.stockSku;
+        propertyMismatch = Boolean(match.propertyMismatch);
+        propertyMismatchNote = propertyMismatch
+          ? `BOQ richiede ${propertyLabel(match.requestedProperty)}, disponibile a stock ${propertyLabel(match.stockProperty)} (${stockSku}). `
+          : "";
+        const freeQty = await getFreeQtyForSku(stockSku);
+        const stockInfo = stockInfoBySku.get(stockSku);
         qtyReserved = Math.max(0, Math.min(row.qty_required, Number(freeQty || 0)));
-        freeQtyBySku.set(row.sku, Math.max(0, Number(freeQty || 0) - qtyReserved));
+        freeQtyBySku.set(stockSku, Math.max(0, Number(freeQty || 0) - qtyReserved));
         matchedItemId = stockInfo?.item_id || null;
         if (!description && stockInfo?.description) description = stockInfo.description;
         if (!stockInfo) {
@@ -923,13 +1021,13 @@ export async function upsertBomFromRows(equipment, rows) {
           reservationNote = `Non presente a stock: comprare ${row.qty_required} ${row.source_unit || "pz"}`;
         } else if (qtyReserved >= row.qty_required) {
           availability = "OK";
-          reservationNote = `Presente a stock: riservati ${qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Presente a stock: riservati ${qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else if (qtyReserved > 0) {
           availability = "PARTIAL";
-          reservationNote = `Parziale: riservati ${qtyReserved}, da comprare ${row.qty_required - qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Parziale: riservati ${qtyReserved}, da comprare ${row.qty_required - qtyReserved} ${stockInfo.uom || row.source_unit || ""}`.trim();
         } else {
           availability = "MISSING";
-          reservationNote = `Stock insufficiente: comprare ${row.qty_required} ${stockInfo?.uom || row.source_unit || ""}`.trim();
+          reservationNote = `${propertyMismatchNote}Stock insufficiente: comprare ${row.qty_required} ${stockInfo?.uom || row.source_unit || ""}`.trim();
         }
       }
 
@@ -943,7 +1041,7 @@ export async function upsertBomFromRows(equipment, rows) {
         `,
         [
           bomId,
-          row.sku,
+          stockSku,
           description,
           row.qty_required,
           qtyReserved,
@@ -966,7 +1064,7 @@ export async function upsertBomFromRows(equipment, rows) {
             qty_reserved = stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
             updated_at = NOW()
           `,
-          [eq, row.sku, qtyReserved],
+          [eq, stockSku, qtyReserved],
         );
       }
     }
